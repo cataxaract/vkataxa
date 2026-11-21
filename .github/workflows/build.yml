@@ -63,9 +63,12 @@ jobs:
         run: |
           java -jar scripts/apksigner.jar sign --ks scripts/debug.keystore --ks-key-alias androiddebugkey --ks-pass pass:android build-output/VTLite.apk
           java -jar scripts/apksigner.jar verify build-output/VTLite.apk
+          cp RELEASE_NOTES.md build-output/RELEASE_NOTES.md
                       
       - name: Upload apk to artifact
         uses: actions/upload-artifact@v3
         with:
           name: VTLite.apk
-          path: build-output/VTLite.apk
+          path: |
+            build-output/VTLite.apk
+            build-output/RELEASE_NOTES.md

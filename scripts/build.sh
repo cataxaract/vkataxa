@@ -34,4 +34,6 @@ cd ../scripts
 ./apksigner sign --ks debug.keystore --ks-key-alias androiddebugkey --ks-pass pass:android ../build-output/VTLite.apk
 check_result
 
+cp ../RELEASE_NOTES.md ../build-output/RELEASE_NOTES.md
+
 echo -e "${BOLD}VTosters Lite успешно собран! APK находится в папке build-output${NC}"
