@@ -12,6 +12,8 @@ import static ru.vtosters.hooks.MessagesHook.injectOwnTextAll;
 public class EncryptionMessagesHook {
     // For message editing
     public static String decryptMessage(MsgFromUser msg, boolean showEmoji) {
+        if (msg == null) return "";
+
         var decryptedMessage = decryptMessage(EncryptProvider.getBody(msg), EncryptProvider.getPeerId(msg));
         if (!showEmoji && !decryptedMessage.equals(injectOwnTextAll(EncryptProvider.getBody(msg))))
             decryptedMessage = decryptedMessage.replaceAll("^\uD83D\uDD12 ", "");
@@ -19,6 +21,8 @@ public class EncryptionMessagesHook {
     }
 
     public static String decryptMessage(String msg, MsgListComponent list) {
+        if (msg == null || list == null) return msg;
+
         var peerid = list.G().getId();
         var decryptedMessage = decryptMessage(msg, peerid);
         if (!decryptedMessage.equals(injectOwnTextAll(msg)))
@@ -27,6 +31,8 @@ public class EncryptionMessagesHook {
     }
 
     public static CharSequence decryptMessage(CharSequence msg, int peerid) {
+        if (msg == null) return null;
+
         return decryptMessage(msg.toString(), peerid);
     }
 
@@ -34,7 +40,7 @@ public class EncryptionMessagesHook {
         if (msg instanceof MsgFromUser) {
             var decrypted = decryptMessage(((MsgFromUser) msg).f(), msg.v1());
 
-            if (decrypted.contains("\uD83D\uDD12")) {
+            if (decrypted != null && decrypted.contains("\uD83D\uDD12")) {
                 return decrypted;
             }
 
@@ -48,6 +54,8 @@ public class EncryptionMessagesHook {
     }
 
     public static CharSequence decryptMessage(CharSequence msgBody, MsgFromUser msgFromUser, boolean showEmoji) {
+        if (msgBody == null) return null;
+
         try {
             return decryptMessage((String) msgBody, msgFromUser.v1(), showEmoji);
         } catch (Exception e) {
@@ -57,6 +65,8 @@ public class EncryptionMessagesHook {
 
     // For MentionsFormatter that requires CharSequence
     public static CharSequence decryptMessage(String msgBody, int peer, boolean showEmoji) {
+        if (msgBody == null) return null;
+
         var decryptedMessage = decryptMessage(msgBody, peer);
         if (!showEmoji && !decryptedMessage.equals(injectOwnTextAll(msgBody)))
             decryptedMessage = decryptedMessage.replaceAll("^\uD83D\uDD12 ", "");
@@ -65,10 +75,14 @@ public class EncryptionMessagesHook {
 
     // This will run through EVERY single processor available.
     public static String decryptMessage(MsgFromUser msg) {
+        if (msg == null) return "";
+
         return decryptMessage(EncryptProvider.getBody(msg), EncryptProvider.getPeerId(msg));
     }
 
     public static String decryptMessage(String msgBody, int peer) {
+        if (msgBody == null) return null;
+
         try {
             for (IMProcessor processor : EncryptProvider.processors) {
                 if (!processor.isEncrypted(msgBody)) continue;

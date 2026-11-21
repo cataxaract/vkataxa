@@ -77,39 +77,60 @@ public class DeletedMessagesHook {
     public static void applyTransparency(View view, Msg msg) {
         if (view == null) return;
 
-        view.setAlpha(msg != null && isDeletedMessage(msg.C1()) ? 0.55f : 1f);
+        try {
+            view.setAlpha(msg != null && isDeletedMessage(msg.C1()) ? 0.55f : 1f);
+        } catch (Throwable th) {
+            Log.w("DeletedMessagesHook", "Failed to apply message transparency", th);
+        }
     }
 
     public static void setBodyDBParser(Msg msg) {
         if (!(msg instanceof MsgFromUser)) return;
 
-        MsgFromUser msgFromUser = (MsgFromUser) msg;
-        List<NestedMsg> nestedMsgs = msgFromUser.w0();
+        try {
+            MsgFromUser msgFromUser = (MsgFromUser) msg;
+            List<NestedMsg> nestedMsgs = msgFromUser.w0();
 
-        if (!sDeletedMessagesList.isEmpty()) {
-            checkForNestedMsg(nestedMsgs);
-        }
+            if (!sDeletedMessagesList.isEmpty()) {
+                checkForNestedMsg(nestedMsgs);
+            }
 
-        if (sDeletedMessagesList.contains(msg.C1())) {
-            restoreDeletedPhotos(msg.C1(), msgFromUser.J0(), nestedMsgs);
-            editTextOfMsg(msgFromUser);
+            if (sDeletedMessagesList.contains(msg.C1())) {
+                restoreDeletedPhotos(msg.C1(), msgFromUser.J0(), nestedMsgs);
+                editTextOfMsg(msgFromUser);
+            }
+        } catch (Throwable th) {
+            Log.w("DeletedMessagesHook", "Failed to parse deleted message", th);
         }
     }
 
     private static void checkForNestedMsg(List<NestedMsg> nestedMsgs) {
-        for (NestedMsg nestedMsg : nestedMsgs) {
-            List<NestedMsg> nested = nestedMsg.w0();
-            if (!nested.isEmpty()) checkForNestedMsg(nested);
+        if (nestedMsgs == null) return;
 
-            nestedMsg.d(EncryptionMessagesHook.decryptMessage(nestedMsg.f(), nestedMsg.getFrom().getId()));
+        for (NestedMsg nestedMsg : nestedMsgs) {
+            if (nestedMsg == null) continue;
+
+            try {
+                List<NestedMsg> nested = nestedMsg.w0();
+                if (nested != null && !nested.isEmpty()) checkForNestedMsg(nested);
+
+                String body = nestedMsg.f();
+                if (body == null || nestedMsg.getFrom() == null) continue;
+
+                nestedMsg.d(EncryptionMessagesHook.decryptMessage(body, nestedMsg.getFrom().getId()));
+            } catch (Throwable th) {
+                Log.w("DeletedMessagesHook", "Failed to parse nested message", th);
+            }
         }
     }
 
     private static void editTextOfMsg(MsgFromUser msgFromUser) {
         String body = msgFromUser.f();
+        if (body == null) return;
+
         String decrypted = EncryptionMessagesHook.decryptMessage(body, msgFromUser.v1());
 
-        if (!decrypted.equals(body)) {
+        if (decrypted != null && !decrypted.equals(body)) {
             msgFromUser.d(decrypted);
         }
     }
@@ -139,7 +160,7 @@ public class DeletedMessagesHook {
 
         saveDeletedPhotos(msgDeleteLpTask, messageId);
         sDeletedMessagesList.add(messageId);
-        sVTDatabase.saveDeletedMessage(messageId);
+        if (sVTDatabase != null) sVTDatabase.saveDeletedMessage(messageId);
     }
 
     private static void saveDeletedPhotos(MsgDeleteLpTask msgDeleteLpTask, int messageId) {
@@ -194,6 +215,8 @@ public class DeletedMessagesHook {
     }
 
     private static Image getDisplayImage(AttachImage attachImage) {
+        if (attachImage == null) return null;
+
         Image image = attachImage.r() ? attachImage.j() : attachImage.k();
 
         if (image == null) {
@@ -261,21 +284,29 @@ public class DeletedMessagesHook {
             for (Attach attach : attaches) {
                 if (!(attach instanceof AttachImage)) continue;
 
-                AttachImage attachImage = (AttachImage) attach;
-                File localFile = attachImage.i();
-                if (localFile != null && localFile.exists() && localFile.length() > 0) continue;
+                try {
+                    AttachImage attachImage = (AttachImage) attach;
+                    File localFile = attachImage.i();
+                    if (localFile != null && localFile.exists() && localFile.length() > 0) continue;
 
-                Image image = findRestoredImage(messageId, attachImage);
-                if (image != null) {
-                    attachImage.a(new ImageList(image));
+                    Image image = findRestoredImage(messageId, attachImage);
+                    if (image != null) {
+                        attachImage.a(new ImageList(image));
+                    }
+                } catch (Throwable th) {
+                    Log.w("DeletedMessagesHook", "Failed to restore deleted photo", th);
                 }
             }
         }
 
         if (nestedMsgs != null) {
             for (NestedMsg nestedMsg : nestedMsgs) {
-                if (nestedMsg != null) {
+                if (nestedMsg == null) continue;
+
+                try {
                     restoreDeletedPhotos(messageId, nestedMsg.J0(), nestedMsg.w0());
+                } catch (Throwable th) {
+                    Log.w("DeletedMessagesHook", "Failed to restore nested deleted photo", th);
                 }
             }
         }
@@ -384,11 +415,15 @@ public class DeletedMessagesHook {
     }
 
     private static Image findRestoredImage(int messageId, AttachImage attachImage) {
+        if (attachImage == null) return null;
+
         int attachLocalId = attachImage.getLocalId();
         ImageList localList = attachImage.o();
 
-        if (localList != null) {
+        if (localList != null && localList.u1() != null) {
             for (Image image : localList.u1()) {
+                if (image == null) continue;
+
                 File file = getExistingDeletedPhotoFile(messageId, attachLocalId, attachImage.getId(), image.getWidth(), image.getHeight());
                 if (file != null) {
                     return new Image(image.getWidth(), image.getHeight(), Uri.fromFile(file).toString());
@@ -398,8 +433,10 @@ public class DeletedMessagesHook {
 
         ImageList remoteList = attachImage.p();
 
-        if (remoteList != null) {
+        if (remoteList != null && remoteList.u1() != null) {
             for (Image image : remoteList.u1()) {
+                if (image == null) continue;
+
                 File file = getExistingDeletedPhotoFile(messageId, attachLocalId, attachImage.getId(), image.getWidth(), image.getHeight());
                 if (file != null) {
                     return new Image(image.getWidth(), image.getHeight(), Uri.fromFile(file).toString());
