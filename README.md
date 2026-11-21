@@ -1,13 +1,6 @@
-<p align="center">
-    <a href="https://vtosters.app/">
-        <picture>
-          <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/vtosters/lite/main/.github/images/VT_Fill_Logo_Dark.svg">
-          <img src="https://raw.githubusercontent.com/vtosters/lite/main/.github/images/VT_Fill_Logo_Light.svg">
-        </picture>
-    </a>
-</p>
+# vkataxa
 
-**ВТостерс Lite** — это модифицированный клиент официального ВКонтакте, основанный на версии **5.56.1 (4838)**
+**vkataxa** — форк VTosters Lite, модифицированного клиента ВКонтакте, основанный на версии **5.56.1 (4838)**.
 
 * Вы можете предложить свои идеи/сообщить о багах в [Issues](https://github.com/cataxaract/vkataxa/issues)
 
@@ -23,7 +16,7 @@
 - [Разработка](#разработка)
   - [Всё необходимое для сборки и компиляции](#всё-необходимое-для-сборки-и-компиляции)
   - [Необходимые зависимости](#необходимые-зависимости)
-  - [Linux/MacOS/Windows](#LinuxmacOSWindows)
+  - [Linux/macOS/Windows](#linuxmacoswindows)
 
 
 ## Функциональность
@@ -41,7 +34,7 @@
 * Эксклюзивные функции и галочки для тех кто поддержал разработку.
 * Глобальная оптимизация приложения VK (Удалены сторонние библиотеки рекламы, аналитики и метрики, заглушки для рекламных запросов)
 
-Все функции модификации описаны [здесь](https://github.com/vtosters/lite/blob/main/.github/features.md)
+Список функций может отличаться от оригинального VTosters Lite.
 
 ## Отладка приложения
 
