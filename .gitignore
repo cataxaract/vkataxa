@@ -17,6 +17,7 @@ local.properties
 
 *.apk
 /build-output/
+/project overview/
 /smali/build/apk/
 /smali/VTLite.jobf
 /smali/VTLite.apk.idsig
