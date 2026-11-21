@@ -9,14 +9,12 @@
 
 **ВТостерс Lite** — это модифицированный клиент официального ВКонтакте, основанный на версии **5.56.1 (4838)**
 
-* Вы можете предложить свои идеи/сообщить о багах в [Issues](https://github.com/vtosters/lite/issues)
+* Вы можете предложить свои идеи/сообщить о багах в [Issues](https://github.com/cataxaract/vkataxa/issues)
 
-* Скачивать самые актуальные версии можно с [Actions](https://github.com/vtosters/lite/actions)
+* Скачивать самые актуальные версии можно с [Actions](https://github.com/cataxaract/vkataxa/actions) 
 <sup><sub>(могут содержать баги)</sub></sup>
 
-* Стабильные сборки находятся в [Releases](https://github.com/vtosters/lite/releases)
-
-Зеркало на нашем [<img src="https://gitea.com/assets/img/logo.svg" align="center" width="20" height="20"/> Git](https://git.maki.su/vtosters/lite)
+* Стабильные сборки находятся в [Releases](https://github.com/cataxaract/vkataxa/releases)
 
 ### Быстрая навигация
 
@@ -40,7 +38,7 @@
 * Возможность отправлять стикеры из Telegram
 * Отключение редиректа через away.php
 * Поддержка сторонних прокси для пользователей из Украины
-* Эксклюзивные функции и галочки для тех кто поддержал разработку. <a href="https://vtosters.app/donate">Подробнее</a> 
+* Эксклюзивные функции и галочки для тех кто поддержал разработку.
 * Глобальная оптимизация приложения VK (Удалены сторонние библиотеки рекламы, аналитики и метрики, заглушки для рекламных запросов)
 
 Все функции модификации описаны [здесь](https://github.com/vtosters/lite/blob/main/.github/features.md)
@@ -50,8 +48,6 @@
 Для отладки с помощью <a href="#"><img src="https://i.imgur.com/cPvvFDP.png" align="center" width="20" height="23"/></a> Android Studio необходимо пройти в `/smali/AndroidManifest.xml` и изменить значение `android:debuggable`:
 
 `android:debuggable="false"` ➝ `android:debuggable="true"`
-
-Настройки, необходимые для **отладки** вне Android Studio, находятся по этой ссылке: [vk.com/vt/debug](https://vk.com/vt/debug)
 
 * Для дополнительной отладки ответов и логов необходимо включить **[Режим разработчика]**
 
@@ -69,7 +65,7 @@
 
 Для понимания работы декомпилированного кода требуется использовать **Dex to Java** декомпилятор [jadx](https://github.com/skylot/jadx) или же сторонние варианты как [Fernflower](https://github.com/fesh0r/fernflower)
 
-При нахождении решения каких-либо проблем ждем вас в [Pull Requests](https://github.com/vtosters/lite/pulls)
+При нахождении решения каких-либо проблем ждем вас в [Pull Requests](https://github.com/cataxaract/vkataxa/pulls)
 
 * Рекомендуется установка **ADB** в систему ([Как это сделать](https://technastic.com/system-wide-adb-fastboot-windows-10))
 
