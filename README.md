@@ -5,17 +5,6 @@
           <img src="https://raw.githubusercontent.com/vtosters/lite/main/.github/images/VT_Fill_Logo_Light.svg">
         </picture>
     </a>
-    <br>
-    <br>
-    <a href="https://github.com/vtosters/lite/issues">
-        <img src="https://img.shields.io/github/issues/vtosters/lite?style=flat-square"/>
-    </a>
-    <a href="https://github.com/vtosters/lite/network/members">
-        <img src="https://img.shields.io/github/forks/vtosters/lite?style=flat-square"/>
-    </a>
-    <a href="https://github.com/vtosters/lite/stargazers">
-        <img src="https://img.shields.io/github/stars/vtosters/lite?style=flat-square"/>
-    </a>
 </p>
 
 **ВТостерс Lite** — это модифицированный клиент официального ВКонтакте, основанный на версии **5.56.1 (4838)**
