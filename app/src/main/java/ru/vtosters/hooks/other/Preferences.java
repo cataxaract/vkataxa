@@ -22,6 +22,7 @@ import ru.vtosters.lite.utils.*;
 import java.security.NoSuchAlgorithmException;
 
 public class Preferences {
+    private static SharedPreferences sPreferences;
 
     public static void init(Application application) throws Exception {
         AppContextHolder.a = application.getApplicationContext();
@@ -43,7 +44,12 @@ public class Preferences {
     }
 
     public static SharedPreferences getPreferences() {
-        return AndroidUtils.getGlobalContext().getSharedPreferences("com.vtosters.lite_preferences", Context.MODE_PRIVATE);
+        SharedPreferences preferences = sPreferences;
+        if (preferences == null) {
+            preferences = AndroidUtils.getGlobalContext().getSharedPreferences("com.vtosters.lite_preferences", Context.MODE_PRIVATE);
+            sPreferences = preferences;
+        }
+        return preferences;
     }
 
     public static String getString(String name) {

@@ -20,6 +20,9 @@ import static ru.vtosters.lite.ui.dialogs.MessageSettings.bombCount;
 import static ru.vtosters.lite.ui.dialogs.MessageSettings.isSilentEnabled;
 
 public class MessagesHook {
+    private static final Pattern MENTIONS_PATTERN = Pattern.compile("(\\[(?:club|id|public)\\d+\\|[^]]+\\])|(@[^\\s]+)");
+    private static final Pattern MENTION_PLACEHOLDER_PATTERN = Pattern.compile("vtl_mention(\\d+)");
+
     public static String injectOwnText(String oldText) {
         if (!autotranslate() || Preferences.serverFeaturesDisable() || TextUtils.isEmpty(oldText))
             return oldText;
@@ -39,7 +42,7 @@ public class MessagesHook {
 
     public static String replaceMentions(String oldText, BaseTranslator instance) {
         try {
-            var matcher = Pattern.compile("(\\[(?:club|id|public)\\d+\\|[^]]+\\])|(@[^\\s]+)").matcher(oldText);
+            var matcher = MENTIONS_PATTERN.matcher(oldText);
             var mentionsCount = 0;
 
             var textBuff = new StringBuffer();
@@ -52,7 +55,7 @@ public class MessagesHook {
             matcher.appendTail(textBuff);
 
             var translatedText = instance.getTranslation(textBuff.toString());
-            var matcherMentions = Pattern.compile("vtl_mention(\\d+)").matcher(translatedText);
+            var matcherMentions = MENTION_PLACEHOLDER_PATTERN.matcher(translatedText);
             var retTextBuff = new StringBuffer();
             while (matcherMentions.find()) {
                 matcherMentions.appendReplacement(retTextBuff, mentions.get(

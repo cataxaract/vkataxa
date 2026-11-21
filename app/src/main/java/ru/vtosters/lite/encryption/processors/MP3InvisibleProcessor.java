@@ -6,8 +6,10 @@ import androidx.annotation.Nullable;
 import ru.vtosters.lite.encryption.base.IMProcessor;
 
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
 
 public class MP3InvisibleProcessor extends IMProcessor {
+    private static final Pattern ENCRYPTED_PATTERN = Pattern.compile("^\u2001\u2002([\u200A\u200B\u200C\u200F\u202F\u206A\u206B\u206C\u206D\u206E\u206F\\s]*)");
     private static String toStr(int a, String cc) {
         StringBuilder s = new StringBuilder();
         while (a > 0) {
@@ -60,7 +62,7 @@ public class MP3InvisibleProcessor extends IMProcessor {
 
     @Override
     public boolean isEncrypted(String source) {
-        return source.matches("^" + "  " + "([" + " ​‌‏ ⁪⁫⁬⁭⁮⁯" + "\\s]*)");
+        return ENCRYPTED_PATTERN.matcher(source).matches();
     }
 
     @NonNull

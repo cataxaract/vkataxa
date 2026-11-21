@@ -29,13 +29,15 @@ import ru.vtosters.lite.concurrent.VTExecutors;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static ru.vtosters.hooks.other.Preferences.getBoolValue;
 import static ru.vtosters.lite.utils.AndroidUtils.getGlobalContext;
 
 public class DeletedMessagesHook {
-    private static List<Integer> sDeletedMessagesList = new ArrayList<>();
+    private static Set<Integer> sDeletedMessagesList = new HashSet<>();
     private static SQLiteDatabase sVKSQLiteDatabase;
     private static int sBodyIndex = -1;
     private static DeletedMessagesDBHelper sVTDatabase;
@@ -44,7 +46,7 @@ public class DeletedMessagesHook {
         if (sVTDatabase == null) {
             sVTDatabase = new DeletedMessagesDBHelper();
         }
-        sDeletedMessagesList = new ArrayList<>(sVTDatabase.loadAllMessages());
+        sDeletedMessagesList = new HashSet<>(sVTDatabase.loadAllMessages());
     }
 
     public static void grabVKDatabase(StorageEnvironment storageEnvironment) {
@@ -58,20 +60,23 @@ public class DeletedMessagesHook {
     public static void setBodyDBParser(Msg msg) {
         if (!(msg instanceof MsgFromUser)) return;
 
-        for (Integer integer : sDeletedMessagesList) {
-            MsgFromUser msgFromUser = (MsgFromUser) msg;
-            checkForNestedMsg(msgFromUser.w0());
-            if (integer == msg.C1()) {
-                restoreDeletedPhotos(integer, msgFromUser.J0(), msgFromUser.w0());
-                editTextOfMsg((MsgFromUser) msg);
-                break;
-            }
+        MsgFromUser msgFromUser = (MsgFromUser) msg;
+        List<NestedMsg> nestedMsgs = msgFromUser.w0();
+
+        if (!sDeletedMessagesList.isEmpty()) {
+            checkForNestedMsg(nestedMsgs);
+        }
+
+        if (sDeletedMessagesList.contains(msg.C1())) {
+            restoreDeletedPhotos(msg.C1(), msgFromUser.J0(), nestedMsgs);
+            editTextOfMsg(msgFromUser);
         }
     }
 
     private static void checkForNestedMsg(List<NestedMsg> nestedMsgs) {
         for (NestedMsg nestedMsg : nestedMsgs) {
-            if (!nestedMsg.w0().isEmpty()) checkForNestedMsg(nestedMsg.w0());
+            List<NestedMsg> nested = nestedMsg.w0();
+            if (!nested.isEmpty()) checkForNestedMsg(nested);
 
             nestedMsg.d(EncryptionMessagesHook.decryptMessage(nestedMsg.f(), nestedMsg.getFrom().getId()));
         }

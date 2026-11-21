@@ -6,9 +6,11 @@ import androidx.annotation.Nullable;
 import ru.vtosters.lite.encryption.base.IMProcessor;
 
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
 
 public class BeeCryptProcessor extends IMProcessor {
     private static final String BC_CHARSET = "жъЖЪ";
+    private static final Pattern ENCRYPTED_PATTERN = Pattern.compile("[\u0436\u044A\u0416\u042A]{16,}");
 
     @NonNull
     @Override
@@ -34,7 +36,7 @@ public class BeeCryptProcessor extends IMProcessor {
 
     @Override
     public boolean isEncrypted(String source) {
-        return source.matches("[жъЖЪ]{16,}");
+        return ENCRYPTED_PATTERN.matcher(source).matches();
     }
 
     @NonNull

@@ -1,6 +1,5 @@
 package ru.vtosters.hooks;
 
-import android.util.Log;
 import com.vk.im.engine.models.messages.Msg;
 import com.vk.im.engine.models.messages.MsgFromUser;
 import com.vk.im.ui.components.msg_list.MsgListComponent;
@@ -72,9 +71,18 @@ public class EncryptionMessagesHook {
     public static String decryptMessage(String msgBody, int peer) {
         try {
             for (IMProcessor processor : EncryptProvider.processors) {
-                if ((processor.isUsed() || !processor.isPublic()) && processor.isEncrypted(msgBody) && (processor.isPublic() || EncryptProvider.getKeyForProcessor(processor, peer) != null)) {
-                    return "\uD83D\uDD12 " + processor.getUIName() + ": " + injectOwnTextAll(processor.decode(msgBody, EncryptProvider.getKeyForProcessor(processor, peer)));
+                if (!processor.isEncrypted(msgBody)) continue;
+
+                if (processor.isPublic()) {
+                    if (!processor.isUsed()) continue;
+
+                    return "\uD83D\uDD12 " + processor.getUIName() + ": " + injectOwnTextAll(processor.decode(msgBody, null));
                 }
+
+                byte[] key = EncryptProvider.getKeyForProcessor(processor, peer);
+                if (key == null) continue;
+
+                return "\uD83D\uDD12 " + processor.getUIName() + ": " + injectOwnTextAll(processor.decode(msgBody, key));
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -86,13 +94,9 @@ public class EncryptionMessagesHook {
     // This will use only the processor which was chosen in chat menu
     public static String encryptMessage(MsgFromUser msg) {
         String msgBody = EncryptProvider.getBody(msg);
-
-        Log.d("EncryptProvider", "encryptMessage: msg = " + msg);
-        Log.d("EncryptProvider", "encryptMessage: body = " + msgBody);
-        Log.d("EncryptProvider", "encryptMessage: peerId = " + EncryptProvider.getPeerId(msg));
+        int peer = EncryptProvider.getPeerId(msg);
 
         for (IMProcessor processor : EncryptProvider.processors) {
-            int peer = EncryptProvider.getPeerId(msg);
             if (processor.isUsedToEncrypt(peer)) {
                 return injectOwnText(processor.encode(msgBody, EncryptProvider.getKeyForProcessor(processor, peer)));
             }

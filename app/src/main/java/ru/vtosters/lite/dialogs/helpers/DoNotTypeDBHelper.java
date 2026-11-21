@@ -28,15 +28,12 @@ public class DoNotTypeDBHelper extends SQLiteOpenHelper {
     public List<Integer> get() {
         ArrayList<Integer> rs = new ArrayList<>();
 
-        try (Cursor c = getReadableDatabase().query("dnt", null, null, null, null, null, null)) {
+        try (Cursor c = getReadableDatabase().query("dnt", null, "enabled = 1", null, null, null, null)) {
             if (c.moveToFirst()) {
                 int peerIdIndex = c.getColumnIndex("peerId");
-                int enabledIndex = c.getColumnIndex("enabled");
 
                 do {
-                    if (c.getInt(enabledIndex) == 1) {
-                        rs.add(c.getInt(peerIdIndex));
-                    }
+                    rs.add(c.getInt(peerIdIndex));
                 } while (c.moveToNext());
             }
         } catch (Exception e) {
@@ -47,15 +44,11 @@ public class DoNotTypeDBHelper extends SQLiteOpenHelper {
     }
 
     public boolean isEnabledForPeerId(int peerId) {
-        try (Cursor c = getReadableDatabase().query("dnt", null, null, null, null, null, null)) {
+        try (Cursor c = getReadableDatabase().query("dnt", null, "peerId = ?", new String[]{String.valueOf(peerId)}, null, null, null)) {
             if (c.moveToFirst()) {
-                int peerIdIndex = c.getColumnIndex("peerId");
                 int enabledIndex = c.getColumnIndex("enabled");
 
-                do {
-                    if (c.getInt(peerIdIndex) == peerId)
-                        return c.getInt(enabledIndex) == 1;
-                } while (c.moveToNext());
+                return c.getInt(enabledIndex) == 1;
             }
         } catch (Exception e) {
             e.printStackTrace();
