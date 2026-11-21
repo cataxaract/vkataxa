@@ -15,7 +15,8 @@ echo.
 echo %ESC%[1;4mBuild apk...%ESC%[0m
 echo.
 cd smali\
-call java -jar ../scripts/apktool.jar b . -o ../scripts/VTLite.apk --use-aapt2 -p ../scripts/framework/
+if not exist ..\build-output mkdir ..\build-output
+call java -Xmx4g -Djava.awt.headless=true -jar ../scripts/apktool.jar b . -o ../build-output/VTLite.apk --use-aapt2 -p ../scripts/framework/
 if "%ERRORLEVEL%" == "0" (
     echo %ESC%[92mSuccessful%ESC%[0m
 ) else (
@@ -26,7 +27,7 @@ if "%ERRORLEVEL%" == "0" (
 echo.
 echo %ESC%[1;4mSign apk...%ESC%[0m
 echo.
-call java -jar ../scripts/apksigner.jar sign --ks ../scripts/debug.keystore --ks-key-alias androiddebugkey --ks-pass pass:android ../scripts/VTLite.apk
+call java -jar ../scripts/apksigner.jar sign --ks ../scripts/debug.keystore --ks-key-alias androiddebugkey --ks-pass pass:android ../build-output/VTLite.apk
 if "%ERRORLEVEL%" == "0" (
     echo %ESC%[92mSuccessful%ESC%[0m
 ) else (

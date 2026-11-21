@@ -83,6 +83,7 @@
 * Весь исходный код модификации находится в `/app`
 
 * Все необходимые скрипты/.jar файлы для компиляции APK, его подписывании и не только находятся в `/scripts`
+* Готовый APK после сборки находится в `/build-output`
 
 ### Необходимые зависимости
 <img src="https://i.imgur.com/z8ZN19a.png" align="center" width="20" height="23"/> [**JDK**](https://adoptium.net/temurin/releases/) >14 версии

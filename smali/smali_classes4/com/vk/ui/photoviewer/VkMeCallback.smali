@@ -731,6 +731,29 @@
 
     .line 10
     :sswitch_1
+    move-object v3, v0
+
+    iget-object v0, p0, Lcom/vk/ui/photoviewer/VkMeCallback;->F:Ljava/util/List;
+
+    invoke-static {v0, p2}, Lkotlin/collections/l;->c(Ljava/util/List;I)Ljava/lang/Object;
+
+    move-result-object v0
+
+    check-cast v0, Lcom/vk/im/engine/models/attaches/AttachWithImage;
+
+    invoke-static {v0}, Lru/vtosters/hooks/DeletedMessagesHook;->saveDeletedImageToGallery(Lcom/vk/im/engine/models/attaches/AttachWithImage;)Z
+
+    move-result v0
+
+    if-eqz v0, :cond_save_original
+
+    return v1
+
+    :cond_save_original
+    move-object v0, v3
+
+    const/4 v3, 0x0
+
     new-instance p2, Lcom/vtosters/lite/im/ImContentOpenHelper;
 
     invoke-direct {p2, v0}, Lcom/vtosters/lite/im/ImContentOpenHelper;-><init>(Landroid/content/Context;)V

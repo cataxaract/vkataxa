@@ -35,6 +35,8 @@ import java.io.IOException;
 import java.util.List;
 
 public class PhotoViewer {
+    private static final int ID_SAVE_PHOTO = 0x7f0a09a2;
+    private static final int ID_SAVE_TO_ALBUM = 0x7f0a0b8a;
     static OkHttpClient client = VtOkHttpClient.getInstance();
 
     //region INSERTION INTO SMALI
@@ -78,12 +80,31 @@ public class PhotoViewer {
     @SuppressLint("NonConstantResourceId")
     public static boolean interceptClick(AttachmentWithMedia attachment, MenuItem item, View view) {
         switch (item.getItemId()) {
-            case R.id.copy_image -> copyImage(attachment);
-            case R.id.search_photo -> searchImageWithUrl(attachment);
-            case R.id.copy_photo_url -> copyImageUrl(attachment);
-            case R.id.open_original_photo -> openUrl(getImageUrlFromAttachment(attachment));
+            case R.id.copy_image -> {
+                copyImage(attachment);
+                return true;
+            }
+            case R.id.search_photo -> {
+                searchImageWithUrl(attachment);
+                return true;
+            }
+            case R.id.copy_photo_url -> {
+                copyImageUrl(attachment);
+                return true;
+            }
+            case R.id.open_original_photo -> {
+                openUrl(getImageUrlFromAttachment(attachment));
+                return true;
+            }
         }
-        return true;
+
+        int itemId = item.getItemId();
+
+        if ((itemId == ID_SAVE_PHOTO || itemId == ID_SAVE_TO_ALBUM) && DeletedMessagesHook.saveDeletedPhotoToGallery(attachment)) {
+            return true;
+        }
+
+        return false;
     }
     //endregion
 

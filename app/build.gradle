@@ -177,12 +177,12 @@ task generateBuildTasks() {
             }
             task "buildAndInstallVTL$buildType"(type: Exec) {
                 dependsOn('buildVTL' + buildType)
-                workingDir(scriptsFolder.toString())
+                workingDir(projectDir.parentFile)
                 ignoreExitValue true
                 if (Os.isFamily("unix") || Os.isFamily("mac")) {
-                    commandLine 'bash', '-c', 'adb install VTLite.apk'
+                    commandLine 'bash', '-c', 'adb install build-output/VTLite.apk'
                 } else {
-                    commandLine 'adb', 'install', 'VTLite.apk'
+                    commandLine 'adb', 'install', 'build-output/VTLite.apk'
                 }
             }
             task "buildAndLaunchVTL$buildType"(type: Exec) {

@@ -4,6 +4,8 @@ import android.content.Context;
 import android.text.TextUtils;
 import android.view.View;
 import com.vk.api.internal.MethodCall;
+import com.vk.im.engine.models.messages.MsgFromUser;
+import com.vk.im.engine.models.messages.NestedMsg;
 import com.vk.im.ui.providers.audiomsg.ImAudioMsgPlayerProvider;
 import com.vk.im.ui.providers.audiomsg.PlayerActionSources;
 import com.vtosters.lite.im.ImEngineProvider;
@@ -13,6 +15,7 @@ import ru.vtosters.lite.ui.dialogs.MessageSettings;
 import ru.vtosters.lite.utils.LifecycleUtils;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Pattern;
 
 import static ru.vtosters.hooks.other.Preferences.*;
@@ -23,8 +26,49 @@ public class MessagesHook {
     private static final Pattern MENTIONS_PATTERN = Pattern.compile("(\\[(?:club|id|public)\\d+\\|[^]]+\\])|(@[^\\s]+)");
     private static final Pattern MENTION_PLACEHOLDER_PATTERN = Pattern.compile("vtl_mention(\\d+)");
 
-    public static String injectOwnText(String oldText) {
-        if (!autotranslate() || Preferences.serverFeaturesDisable() || TextUtils.isEmpty(oldText))
+    public static void prepareDeletedForward(MsgFromUser msg) {
+        if (msg == null || !DeletedMessagesHook.hook()) return;
+
+        List<NestedMsg> nestedMessages = msg.m0();
+        if (nestedMessages == null || nestedMessages.isEmpty()) return;
+
+        List<NestedMsg> remaining = new ArrayList<>(nestedMessages.size());
+        StringBuilder copiedText = new StringBuilder();
+        boolean hasDeleted = false;
+
+        for (NestedMsg nestedMsg : nestedMessages) {
+            if (nestedMsg == null) continue;
+
+            if (DeletedMessagesHook.isDeletedMessage(nestedMsg.t1())) {
+                hasDeleted = true;
+
+                String body = nestedMsg.f();
+                if (TextUtils.isEmpty(body)) continue;
+
+                int peerId = nestedMsg.getFrom() != null ? nestedMsg.getFrom().getId() : 0;
+                String text = EncryptionMessagesHook.decryptMessage(body, peerId);
+
+                if (!TextUtils.isEmpty(text)) {
+                    if (copiedText.length() > 0) copiedText.append("\n\n");
+                    copiedText.append(text);
+                }
+            } else {
+                remaining.add(nestedMsg);
+            }
+        }
+
+        if (!hasDeleted || copiedText.length() == 0) return;
+
+        String ownText = msg.f();
+        if (!TextUtils.isEmpty(ownText)) {
+            copiedText.insert(0, ownText + "\n\n");
+        }
+
+        msg.d(copiedText.toString());
+        msg.d(remaining);
+    }
+
+    public static String injectOwnText(String oldText) {        if (!autotranslate() || Preferences.serverFeaturesDisable() || TextUtils.isEmpty(oldText))
             return oldText;
         var instance = BaseTranslator.getInstance();
 

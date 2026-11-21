@@ -69,6 +69,8 @@
         }
     .end annotation
 
+    invoke-static {p1}, Lru/vtosters/hooks/MessagesHook;->prepareDeletedForward(Lcom/vk/im/engine/models/messages/MsgFromUser;)V
+
     .line 1
     new-instance v0, Ljava/lang/StringBuilder;
 
