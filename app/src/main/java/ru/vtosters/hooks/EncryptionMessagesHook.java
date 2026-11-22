@@ -1,5 +1,6 @@
 package ru.vtosters.hooks;
 
+import android.util.LruCache;
 import com.vk.im.engine.models.messages.Msg;
 import com.vk.im.engine.models.messages.MsgFromUser;
 import com.vk.im.ui.components.msg_list.MsgListComponent;
@@ -10,6 +11,7 @@ import static ru.vtosters.hooks.MessagesHook.injectOwnText;
 import static ru.vtosters.hooks.MessagesHook.injectOwnTextAll;
 
 public class EncryptionMessagesHook {
+    private static final LruCache<String, Boolean> sPlainTextCache = new LruCache<>(256);
     // For message editing
     public static String decryptMessage(MsgFromUser msg, boolean showEmoji) {
         if (msg == null) return "";
@@ -82,10 +84,15 @@ public class EncryptionMessagesHook {
 
     public static String decryptMessage(String msgBody, int peer) {
         if (msgBody == null) return null;
+        if (Boolean.FALSE.equals(sPlainTextCache.get(msgBody))) return injectOwnTextAll(msgBody);
 
         try {
+            boolean matched = false;
+
             for (IMProcessor processor : EncryptProvider.processors) {
                 if (!processor.isEncrypted(msgBody)) continue;
+
+                matched = true;
 
                 if (processor.isPublic()) {
                     if (!processor.isUsed()) continue;
@@ -97,6 +104,10 @@ public class EncryptionMessagesHook {
                 if (key == null) continue;
 
                 return "\uD83D\uDD12 " + processor.getUIName() + ": " + injectOwnTextAll(processor.decode(msgBody, key));
+            }
+
+            if (!matched) {
+                sPlainTextCache.put(msgBody, false);
             }
         } catch (Exception e) {
             e.printStackTrace();

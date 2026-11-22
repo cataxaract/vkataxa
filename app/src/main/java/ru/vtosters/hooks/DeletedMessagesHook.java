@@ -78,7 +78,10 @@ public class DeletedMessagesHook {
         if (view == null) return;
 
         try {
-            view.setAlpha(msg != null && isDeletedMessage(msg.C1()) ? 0.55f : 1f);
+            float alpha = msg != null && isDeletedMessage(msg.C1()) ? 0.55f : 1f;
+            if (view.getAlpha() != alpha) {
+                view.setAlpha(alpha);
+            }
         } catch (Throwable th) {
             Log.w("DeletedMessagesHook", "Failed to apply message transparency", th);
         }
@@ -418,28 +421,37 @@ public class DeletedMessagesHook {
         if (attachImage == null) return null;
 
         int attachLocalId = attachImage.getLocalId();
+        int photoId = attachImage.getId();
         ImageList localList = attachImage.o();
 
-        if (localList != null && localList.u1() != null) {
-            for (Image image : localList.u1()) {
-                if (image == null) continue;
+        if (localList != null) {
+            List<Image> localImages = localList.u1();
 
-                File file = getExistingDeletedPhotoFile(messageId, attachLocalId, attachImage.getId(), image.getWidth(), image.getHeight());
-                if (file != null) {
-                    return new Image(image.getWidth(), image.getHeight(), Uri.fromFile(file).toString());
+            if (localImages != null) {
+                for (Image image : localImages) {
+                    if (image == null) continue;
+
+                    File file = getExistingDeletedPhotoFile(messageId, attachLocalId, photoId, image.getWidth(), image.getHeight());
+                    if (file != null) {
+                        return new Image(image.getWidth(), image.getHeight(), Uri.fromFile(file).toString());
+                    }
                 }
             }
         }
 
         ImageList remoteList = attachImage.p();
 
-        if (remoteList != null && remoteList.u1() != null) {
-            for (Image image : remoteList.u1()) {
-                if (image == null) continue;
+        if (remoteList != null) {
+            List<Image> remoteImages = remoteList.u1();
 
-                File file = getExistingDeletedPhotoFile(messageId, attachLocalId, attachImage.getId(), image.getWidth(), image.getHeight());
-                if (file != null) {
-                    return new Image(image.getWidth(), image.getHeight(), Uri.fromFile(file).toString());
+            if (remoteImages != null) {
+                for (Image image : remoteImages) {
+                    if (image == null) continue;
+
+                    File file = getExistingDeletedPhotoFile(messageId, attachLocalId, photoId, image.getWidth(), image.getHeight());
+                    if (file != null) {
+                        return new Image(image.getWidth(), image.getHeight(), Uri.fromFile(file).toString());
+                    }
                 }
             }
         }
