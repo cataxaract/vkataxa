@@ -16,11 +16,11 @@ public class OTAUtils {
 
     private static final String REPO = "cataxaract/vkataxa";
     private static final String LATEST_RELEASE_URL = "https://api.github.com/repos/" + REPO + "/releases/latest";
-    private static final String LATEST_RELEASE_COMMIT_URL = "https://api.github.com/repos/" + REPO + "/git/ref/tags/%s";
+    private static final String LATEST_RELEASE_COMMIT_URL = "https://api.github.com/repos/" + REPO + "/commits/%s";
+    private static final String COMPARE_URL = "https://api.github.com/repos/" + REPO + "/compare/%s...%s";
     private final OkHttpClient mClient = VtOkHttpClient.getInstance();
     private final OTAListener mListener;
     private JSONObject mReleaseJson;
-    private JSONObject mCommitJson;
     private String mCommitSHA = "";
 
     public OTAUtils(OTAListener listener) {
@@ -72,12 +72,9 @@ public class OTAUtils {
             @Override
             public void a(Call call, Response response) {
                 try (Response result = response) {
-                    mCommitJson = new JSONObject(GzipDecompressor.decompressResponse(result));
-                    mCommitSHA = mCommitJson.getJSONObject("object").getString("sha");
-                    if (isNewVersion())
-                        mListener.onUpdateApplied(isManualCheck);
-                    else
-                        mListener.onUpdateLatest(isManualCheck);
+                    var commitJson = new JSONObject(GzipDecompressor.decompressResponse(result));
+                    mCommitSHA = commitJson.getString("sha");
+                    resolveVersion(isManualCheck);
                 } catch (JSONException | RuntimeException | IOException e) {
                     e.printStackTrace();
                     mListener.onUpdateError();
@@ -86,15 +83,102 @@ public class OTAUtils {
         });
     }
 
+    private void resolveVersion(boolean isManualCheck) {
+        String installedCommit = getInstalledCommit();
+
+        if (TextUtils.isEmpty(mCommitSHA)) {
+            mListener.onUpdateError();
+            return;
+        }
+
+        if (commitsMatch(installedCommit, mCommitSHA)) {
+            mListener.onUpdateLatest(isManualCheck);
+            return;
+        }
+
+        if (TextUtils.isEmpty(installedCommit)) {
+            if (isManualCheck) {
+                mListener.onUpdateApplied(true);
+            } else {
+                mListener.onUpdateLatest(false);
+            }
+            return;
+        }
+
+        Request compare = new Request.a()
+                .b(String.format(COMPARE_URL, Uri.encode(installedCommit), Uri.encode(mCommitSHA)))
+                .a("Accept-Encoding", "gzip")
+                .a();
+
+        mClient.a(compare).a(new Callback() {
+            @Override
+            public void a(Call call, IOException e) {
+                Log.d("OTAHelper", "Error while comparing versions: " + e);
+                fallbackVersionCheck(isManualCheck);
+            }
+
+            @Override
+            public void a(Call call, Response response) {
+                try (Response result = response) {
+                    var compareJson = new JSONObject(GzipDecompressor.decompressResponse(result));
+                    String status = compareJson.optString("status", "");
+
+                    switch (status) {
+                        case "ahead" -> mListener.onUpdateApplied(isManualCheck);
+                        case "behind", "identical" -> mListener.onUpdateLatest(isManualCheck);
+                        case "diverged" -> {
+                            if (isManualCheck) {
+                                mListener.onUpdateApplied(true);
+                            } else {
+                                mListener.onUpdateLatest(false);
+                            }
+                        }
+                        default -> fallbackVersionCheck(isManualCheck);
+                    }
+                } catch (JSONException | RuntimeException | IOException e) {
+                    e.printStackTrace();
+                    fallbackVersionCheck(isManualCheck);
+                }
+            }
+        });
+    }
+
+    private void fallbackVersionCheck(boolean isManualCheck) {
+        if (isManualCheck) {
+            mListener.onUpdateError();
+        } else {
+            mListener.onUpdateLatest(false);
+        }
+    }
+
+    private static String getInstalledCommit() {
+        String commit = VersionReader.getVersionCommit();
+        if (TextUtils.isEmpty(commit)) {
+            commit = VersionReader.getVersionBuild();
+        }
+        return commit == null ? "" : commit;
+    }
+
+    private static boolean commitsMatch(String installed, String release) {
+        if (TextUtils.isEmpty(installed) || TextUtils.isEmpty(release)) return false;
+
+        if (installed.equalsIgnoreCase(release)) return true;
+
+        return installed.length() >= 7 && release.startsWith(installed)
+                || release.length() >= 7 && installed.startsWith(release);
+    }
+
     public String getCommitSHA() {
         return mCommitSHA;
     }
 
-    public boolean isNewVersion() {
+    public String getReleaseTag() {
+        if (mReleaseJson == null) return "";
+
         try {
-            return !mCommitSHA.startsWith(VersionReader.getVersionBuild());
-        } catch (Exception e) {
-            return false;
+            return mReleaseJson.getString("tag_name");
+        } catch (JSONException e) {
+            return "";
         }
     }
 
