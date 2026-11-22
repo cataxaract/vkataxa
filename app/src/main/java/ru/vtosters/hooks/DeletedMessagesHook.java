@@ -660,6 +660,7 @@ public class DeletedMessagesHook {
 
         public void loadDeletedIds(Set<Integer> localIds, Set<Integer> vkIds, Set<Integer> legacyVkIds) {
             SQLiteDatabase db = getReadableDatabase();
+            Set<Integer> localVkIds = ConcurrentHashMap.newKeySet();
 
             try (Cursor cursor = db.query("deleted_msgs", new String[]{"localId", "msgId"}, null, null, null, null, null)) {
                 int localIndex = cursor.getColumnIndex("localId");
@@ -676,12 +677,17 @@ public class DeletedMessagesHook {
                     if (hasVkId) {
                         int vkId = cursor.getInt(msgIndex);
                         vkIds.add(vkId);
-                        if (!hasLocalId) {
+
+                        if (hasLocalId) {
+                            localVkIds.add(vkId);
+                        } else {
                             legacyVkIds.add(vkId);
                         }
                     }
                 }
             }
+
+            legacyVkIds.removeAll(localVkIds);
         }
     }
 }
