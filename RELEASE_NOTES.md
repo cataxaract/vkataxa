@@ -20,7 +20,10 @@
 - Photo restore avoids duplicate image-list lookups and repeated attachment id reads.
 - Deleted-message transparency checks the local message id first; `vk_id` matching is kept as a fallback for old saved records and nested forwarded messages.
 - Deleted-message ids are stored in concurrent sets and the deleted-messages database is opened once instead of being closed after every write.
+- Anti-delete settings now include separate switches for restoring deleted photos and highlighting kept messages.
+- The Updates settings section and automatic update check are available in dev builds again; they use this fork's releases.
 - Encryption rendering strips the lock prefix without regex and no longer performs duplicate translation calls.
+- README rewritten with the fork feature comparison, settings paths, build/test instructions and known limitations.
 
 ### Build
 - GitHub Actions updated: `actions/checkout@v4`, `actions/setup-java@v4` (Temurin 17) and `actions/upload-artifact@v4`.
