@@ -484,7 +484,7 @@ public class DeletedMessagesHook {
         removed += deleteDeletedPhotoFiles(vkIds);
 
         reloadMessagesList();
-        notifyMessagesDeleted(peerId, vkIds);
+        notifyMessagesDeleted(peerId, localIds, vkIds);
 
         return removed;
     }
@@ -541,16 +541,22 @@ public class DeletedMessagesHook {
         return removed;
     }
 
-    private static void notifyMessagesDeleted(int peerId, Set<Integer> localIds) {
-        if (localIds.isEmpty()) return;
+    private static void notifyMessagesDeleted(int peerId, Set<Integer> localIds, Set<Integer> vkIds) {
+        String source = DeletedMessagesHook.class.getSimpleName();
 
         try {
-            IntArrayList ids = new IntArrayList();
-            for (int localId : localIds) {
-                ids.add(localId);
+            if (!vkIds.isEmpty()) {
+                IntArrayList ids = new IntArrayList();
+                for (int vkId : vkIds) {
+                    ids.add(vkId);
+                }
+
+                ImEngine1.a().a(new OnMsgDeleteEvent(source, peerId, ids));
             }
 
-            ImEngine1.a().a(new OnMsgDeleteEvent(DeletedMessagesHook.class.getSimpleName(), peerId, ids));
+            for (int localId : localIds) {
+                ImEngine1.a().a(new OnMsgUpdateEvent(source, peerId, localId));
+            }
         } catch (Throwable th) {
             Log.w("DeletedMessagesHook", "Failed to notify about deleted messages", th);
         }
