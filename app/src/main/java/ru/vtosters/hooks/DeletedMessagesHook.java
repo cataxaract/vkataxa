@@ -1,6 +1,5 @@
 package ru.vtosters.hooks;
 
-import android.annotation.SuppressLint;
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
@@ -41,25 +40,56 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static ru.vtosters.hooks.other.Preferences.getBoolValue;
 import static ru.vtosters.lite.utils.AndroidUtils.getGlobalContext;
 
 public class DeletedMessagesHook {
-    private static Set<Integer> sDeletedMessagesList = new HashSet<>();
-    private static SQLiteDatabase sVKSQLiteDatabase;
-    private static int sBodyIndex = -1;
-    private static DeletedMessagesDBHelper sVTDatabase;
+    private static final Set<Integer> sDeletedLocalIds = ConcurrentHashMap.newKeySet();
+    private static final Set<Integer> sDeletedVkIds = ConcurrentHashMap.newKeySet();
+    private static final Set<Integer> sDeletedLegacyVkIds = ConcurrentHashMap.newKeySet();
+    private static volatile SQLiteDatabase sVKSQLiteDatabase;
+    private static volatile DeletedMessagesDBHelper sVTDatabase;
 
     public static void reloadMessagesList() {
-        if (sVTDatabase == null) {
-            sVTDatabase = new DeletedMessagesDBHelper();
+        DeletedMessagesDBHelper helper = getDatabase();
+        if (helper == null) return;
+
+        Set<Integer> localIds = ConcurrentHashMap.newKeySet();
+        Set<Integer> vkIds = ConcurrentHashMap.newKeySet();
+        Set<Integer> legacyVkIds = ConcurrentHashMap.newKeySet();
+
+        try {
+            helper.loadDeletedIds(localIds, vkIds, legacyVkIds);
+        } catch (Throwable th) {
+            Log.w("DeletedMessagesHook", "Failed to load deleted message ids", th);
+            return;
         }
-        sDeletedMessagesList = new HashSet<>(sVTDatabase.loadAllMessages());
+
+        sDeletedLocalIds.clear();
+        sDeletedLocalIds.addAll(localIds);
+        sDeletedVkIds.clear();
+        sDeletedVkIds.addAll(vkIds);
+        sDeletedLegacyVkIds.clear();
+        sDeletedLegacyVkIds.addAll(legacyVkIds);
+    }
+
+    private static DeletedMessagesDBHelper getDatabase() {
+        DeletedMessagesDBHelper helper = sVTDatabase;
+        if (helper != null) return helper;
+
+        synchronized (DeletedMessagesHook.class) {
+            helper = sVTDatabase;
+            if (helper == null) {
+                helper = new DeletedMessagesDBHelper();
+                sVTDatabase = helper;
+            }
+        }
+
+        return helper;
     }
 
     public static void grabVKDatabase(StorageEnvironment storageEnvironment) {
@@ -71,14 +101,32 @@ public class DeletedMessagesHook {
     }
 
     public static boolean isDeletedMessage(int msgId) {
-        return hook() && sDeletedMessagesList.contains(msgId);
+        return hook() && sDeletedVkIds.contains(msgId);
+    }
+
+    public static boolean isDeletedMessage(Msg msg) {
+        if (!hook() || msg == null) return false;
+
+        int localId = msg.getLocalId();
+        return (localId != 0 && sDeletedLocalIds.contains(localId)) || sDeletedLegacyVkIds.contains(msg.C1());
+    }
+
+    public static boolean isDeletedMessage(NestedMsg msg) {
+        if (!hook() || msg == null) return false;
+
+        int localId = msg.getLocalId();
+        return (localId != 0 && sDeletedLocalIds.contains(localId)) || sDeletedVkIds.contains(msg.t1());
+    }
+
+    private static boolean hasDeletedMessages() {
+        return !sDeletedLocalIds.isEmpty() || !sDeletedVkIds.isEmpty() || !sDeletedLegacyVkIds.isEmpty();
     }
 
     public static void applyTransparency(View view, Msg msg) {
         if (view == null) return;
 
         try {
-            float alpha = msg != null && isDeletedMessage(msg.C1()) ? 0.55f : 1f;
+            float alpha = isDeletedMessage(msg) ? 0.55f : 1f;
             if (view.getAlpha() != alpha) {
                 view.setAlpha(alpha);
             }
@@ -94,11 +142,11 @@ public class DeletedMessagesHook {
             MsgFromUser msgFromUser = (MsgFromUser) msg;
             List<NestedMsg> nestedMsgs = msgFromUser.w0();
 
-            if (!sDeletedMessagesList.isEmpty()) {
+            if (hasDeletedMessages()) {
                 checkForNestedMsg(nestedMsgs);
             }
 
-            if (sDeletedMessagesList.contains(msg.C1())) {
+            if (isDeletedMessage(msgFromUser)) {
                 restoreDeletedPhotos(msg.C1(), msgFromUser.J0(), nestedMsgs);
                 editTextOfMsg(msgFromUser);
             }
@@ -139,31 +187,41 @@ public class DeletedMessagesHook {
     }
 
     public static void updateDialog(MsgDeleteLpTask msgDeleteLpTask) {
-        var cursor = getMessageFromDatabaseById(msgDeleteLpTask.d);
-        if (cursor == null) return;
-
-        @SuppressLint("Range")
-        int localId = cursor.getInt(cursor.getColumnIndex("local_id"));
-
         var className = DeletedMessagesHook.class.getSimpleName();
         var imEnvironment = msgDeleteLpTask.b;
-        var cint = msgDeleteLpTask.c;
-        imEnvironment.a(className, new OnMsgUpdateEvent(className, cint, localId));
+        var peerId = msgDeleteLpTask.c;
+        Integer localId = findLocalId(peerId, msgDeleteLpTask.d);
+
+        if (imEnvironment != null && localId != null) {
+            imEnvironment.a(className, new OnMsgUpdateEvent(className, peerId, localId));
+        }
     }
 
     public static void hookDeletedMessageId(MsgDeleteLpTask msgDeleteLpTask) {
         if (!hook()) return;
 
+        var peerId = msgDeleteLpTask.c;
         var messageId = msgDeleteLpTask.d;
 
-        Cursor c = getMessageFromDatabaseById(messageId);
-        if (c == null) return;
-
-        if (sBodyIndex == -1) sBodyIndex = c.getColumnIndex("body");
-
         saveDeletedPhotos(msgDeleteLpTask, messageId);
-        sDeletedMessagesList.add(messageId);
-        if (sVTDatabase != null) sVTDatabase.saveDeletedMessage(messageId);
+
+        Integer localId = findLocalId(peerId, messageId);
+
+        sDeletedVkIds.add(messageId);
+        if (localId != null) {
+            sDeletedLocalIds.add(localId);
+        } else {
+            sDeletedLegacyVkIds.add(messageId);
+        }
+
+        DeletedMessagesDBHelper helper = getDatabase();
+        if (helper != null) {
+            try {
+                helper.saveDeletedMessage(localId, peerId, messageId);
+            } catch (Throwable th) {
+                Log.w("DeletedMessagesHook", "Failed to save deleted message id", th);
+            }
+        }
     }
 
     private static void saveDeletedPhotos(MsgDeleteLpTask msgDeleteLpTask, int messageId) {
@@ -507,56 +565,123 @@ public class DeletedMessagesHook {
         return dir;
     }
 
-    public static Cursor getMessageFromDatabaseById(int messageId) {
-        String query = "SELECT * FROM messages WHERE vk_id = " + messageId;
-        Cursor c = CustomSqliteExtensionsKt.a(sVKSQLiteDatabase, query);
-        if (!c.moveToFirst()) return null;
-        return c;
+    private static Integer findLocalId(int peerId, int messageId) {
+        SQLiteDatabase db = sVKSQLiteDatabase;
+        if (db == null) return null;
+
+        String query = "SELECT local_id FROM messages WHERE dialog_id = " + peerId + " AND vk_id = " + messageId + " LIMIT 1";
+
+        try (Cursor cursor = CustomSqliteExtensionsKt.a(db, query)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                return cursor.getInt(0);
+            }
+        } catch (Throwable th) {
+            Log.w("DeletedMessagesHook", "Failed to resolve message local id", th);
+        }
+
+        return null;
     }
 
     public static void deleteMessageFromDB(int messageId) {
-        sVKSQLiteDatabase.execSQL("DELETE FROM messages WHERE vk_id = " + messageId);
+        SQLiteDatabase db = sVKSQLiteDatabase;
+        if (db != null) {
+            db.execSQL("DELETE FROM messages WHERE vk_id = " + messageId);
+        }
     }
 
     public static class DeletedMessagesDBHelper extends SQLiteOpenHelper {
+        private static final int DB_VERSION = 2;
+
         public DeletedMessagesDBHelper() {
-            super(getGlobalContext(), "deleted_msgs", null, 1);
+            super(getGlobalContext(), "deleted_msgs", null, DB_VERSION);
         }
 
         @Override
         public void onCreate(SQLiteDatabase db) {
-            db.execSQL("create table deleted_msgs (id integer primary key, msgId integer)");
+            db.execSQL("create table deleted_msgs (id integer primary key, msgId integer, peerId integer, localId integer)");
+            createIndexes(db);
         }
 
         @Override
         public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            if (oldVersion >= 2) return;
 
-        }
+            addColumn(db, "peerId");
+            addColumn(db, "localId");
 
-        public void saveDeletedMessage(int msgId) {
-            SQLiteDatabase sqLiteDatabase = getWritableDatabase();
-
-            ContentValues contentValues = new ContentValues();
-            contentValues.put("msgId", msgId);
-
-            sqLiteDatabase.insert("deleted_msgs", null, contentValues);
-            sqLiteDatabase.close();
-        }
-
-        public List<Integer> loadAllMessages() {
-            List<Integer> msgIdsList = new ArrayList<>();
-
-            Cursor cursor = getReadableDatabase().query("deleted_msgs", null, null, null, null, null, null);
-            if (cursor.moveToFirst()) {
-                int msgIdIndex = cursor.getColumnIndex("msgId");
-
-                do {
-                    msgIdsList.add(cursor.getInt(msgIdIndex));
-                } while (cursor.moveToNext());
-                cursor.close();
+            try {
+                db.execSQL("DELETE FROM deleted_msgs WHERE id NOT IN (SELECT MIN(id) FROM deleted_msgs GROUP BY msgId)");
+            } catch (Throwable th) {
+                Log.w("DeletedMessagesHook", "Failed to deduplicate deleted messages", th);
             }
 
-            return msgIdsList;
+            createIndexes(db);
+        }
+
+        private static void addColumn(SQLiteDatabase db, String column) {
+            if (hasColumn(db, column)) return;
+
+            db.execSQL("ALTER TABLE deleted_msgs ADD COLUMN " + column + " INTEGER");
+        }
+
+        private static boolean hasColumn(SQLiteDatabase db, String column) {
+            try (Cursor cursor = db.rawQuery("PRAGMA table_info(deleted_msgs)", null)) {
+                int nameIndex = cursor.getColumnIndex("name");
+
+                while (cursor.moveToNext()) {
+                    if (nameIndex >= 0 && column.equals(cursor.getString(nameIndex))) {
+                        return true;
+                    }
+                }
+            } catch (Throwable th) {
+                Log.w("DeletedMessagesHook", "Failed to inspect deleted message schema", th);
+            }
+
+            return false;
+        }
+
+        private static void createIndexes(SQLiteDatabase db) {
+            db.execSQL("create unique index if not exists idx_deleted_msgs_local on deleted_msgs(localId) where localId is not null");
+            db.execSQL("create index if not exists idx_deleted_msgs_msg on deleted_msgs(msgId)");
+        }
+
+        public void saveDeletedMessage(Integer localId, int peerId, int msgId) {
+            SQLiteDatabase db = getWritableDatabase();
+
+            ContentValues values = new ContentValues();
+            values.put("msgId", msgId);
+            values.put("peerId", peerId);
+            if (localId != null) {
+                values.put("localId", localId);
+            }
+
+            db.insertWithOnConflict("deleted_msgs", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+        }
+
+        public void loadDeletedIds(Set<Integer> localIds, Set<Integer> vkIds, Set<Integer> legacyVkIds) {
+            SQLiteDatabase db = getReadableDatabase();
+
+            try (Cursor cursor = db.query("deleted_msgs", new String[]{"localId", "msgId"}, null, null, null, null, null)) {
+                int localIndex = cursor.getColumnIndex("localId");
+                int msgIndex = cursor.getColumnIndex("msgId");
+
+                while (cursor.moveToNext()) {
+                    boolean hasLocalId = localIndex >= 0 && !cursor.isNull(localIndex);
+                    boolean hasVkId = msgIndex >= 0 && !cursor.isNull(msgIndex);
+
+                    if (hasLocalId) {
+                        localIds.add(cursor.getInt(localIndex));
+                    }
+
+                    if (hasVkId) {
+                        int vkId = cursor.getInt(msgIndex);
+                        vkIds.add(vkId);
+                        if (!hasLocalId) {
+                            legacyVkIds.add(vkId);
+                        }
+                    }
+                }
+            }
         }
     }
 }

@@ -39,7 +39,7 @@ public class MessagesHook {
         for (NestedMsg nestedMsg : nestedMessages) {
             if (nestedMsg == null) continue;
 
-            if (DeletedMessagesHook.isDeletedMessage(nestedMsg.t1())) {
+            if (DeletedMessagesHook.isDeletedMessage(nestedMsg)) {
                 hasDeleted = true;
 
                 String body = nestedMsg.f();
@@ -68,9 +68,12 @@ public class MessagesHook {
         msg.d(remaining);
     }
 
-    public static String injectOwnText(String oldText) {        if (!autotranslate() || Preferences.serverFeaturesDisable() || TextUtils.isEmpty(oldText))
+    public static String injectOwnText(String oldText) {
+        if (!autotranslate() || Preferences.serverFeaturesDisable() || TextUtils.isEmpty(oldText))
             return oldText;
+
         var instance = BaseTranslator.getInstance();
+        if (instance == null) return oldText;
 
         return replaceMentions(oldText, instance);
     }
@@ -79,12 +82,16 @@ public class MessagesHook {
         if (!autoalltranslate() || Preferences.serverFeaturesDisable() || TextUtils.isEmpty(oldText)) {
             return oldText;
         }
+
         var instance = BaseTranslator.getInstance();
+        if (instance == null) return oldText;
 
         return replaceMentions(oldText, instance);
     }
 
     public static String replaceMentions(String oldText, BaseTranslator instance) {
+        if (instance == null || oldText == null) return oldText;
+
         try {
             var matcher = MENTIONS_PATTERN.matcher(oldText);
             var mentionsCount = 0;
