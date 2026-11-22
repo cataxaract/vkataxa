@@ -1,6 +1,6 @@
-# vkataxa
+# VKataxa
 
-**vkataxa** — форк VTosters Lite, модифицированного клиента ВКонтакте, основанный на версии **5.56.1 (4838)**.
+**VKataxa** — форк VTosters Lite, модифицированного клиента ВКонтакте, основанный на версии **5.56.1 (4838)**.
 
 - Предложить идею или сообщить о баге: [Issues](https://github.com/cataxaract/vkataxa/issues)
 - Свежие сборки: [Actions](https://github.com/cataxaract/vkataxa/actions) <sup><sub>(могут содержать баги)</sub></sup>
