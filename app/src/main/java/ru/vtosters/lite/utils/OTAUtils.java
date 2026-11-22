@@ -1,5 +1,7 @@
 package ru.vtosters.lite.utils;
 
+import android.net.Uri;
+import android.text.TextUtils;
 import android.util.Log;
 import okhttp3.*;
 import org.json.JSONException;
@@ -8,11 +10,13 @@ import ru.vtosters.lite.di.singleton.VtOkHttpClient;
 import ru.vtosters.sponsorpost.utils.GzipDecompressor;
 
 import java.io.IOException;
+import java.util.Locale;
 
 public class OTAUtils {
 
-    private static final String LATEST_RELEASE_URL = "https://api.github.com/repositories/473685743/releases/latest";
-    private static final String LATEST_RELEASE_COMMIT_URL = "https://api.github.com/repositories/473685743/git/ref/tags/%s";
+    private static final String REPO = "cataxaract/vkataxa";
+    private static final String LATEST_RELEASE_URL = "https://api.github.com/repos/" + REPO + "/releases/latest";
+    private static final String LATEST_RELEASE_COMMIT_URL = "https://api.github.com/repos/" + REPO + "/git/ref/tags/%s";
     private final OkHttpClient mClient = VtOkHttpClient.getInstance();
     private final OTAListener mListener;
     private JSONObject mReleaseJson;
@@ -38,10 +42,11 @@ public class OTAUtils {
 
             @Override
             public void a(Call call, Response response) throws IOException {
-                try {
-                    setData(response, isManualCheck);
-                } catch (JSONException | NullPointerException e) {
+                try (Response result = response) {
+                    setData(result, isManualCheck);
+                } catch (JSONException | RuntimeException e) {
                     e.printStackTrace();
+                    mListener.onUpdateError();
                 }
 
             }
@@ -53,7 +58,7 @@ public class OTAUtils {
 
         String tag = mReleaseJson.getString("tag_name");
         Request commit = new Request.a()
-                .b(String.format(LATEST_RELEASE_COMMIT_URL, tag))
+                .b(String.format(LATEST_RELEASE_COMMIT_URL, Uri.encode(tag)))
                 .a("Accept-Encoding", "gzip")
                 .a();
 
@@ -66,14 +71,14 @@ public class OTAUtils {
 
             @Override
             public void a(Call call, Response response) {
-                try {
-                    mCommitJson = new JSONObject(GzipDecompressor.decompressResponse(response));
+                try (Response result = response) {
+                    mCommitJson = new JSONObject(GzipDecompressor.decompressResponse(result));
                     mCommitSHA = mCommitJson.getJSONObject("object").getString("sha");
                     if (isNewVersion())
                         mListener.onUpdateApplied(isManualCheck);
                     else
                         mListener.onUpdateLatest(isManualCheck);
-                } catch (NullPointerException | JSONException | IOException e) {
+                } catch (JSONException | RuntimeException | IOException e) {
                     e.printStackTrace();
                     mListener.onUpdateError();
                 }
@@ -94,6 +99,8 @@ public class OTAUtils {
     }
 
     public String getNewVersionName() {
+        if (mReleaseJson == null) return null;
+
         try {
             return mReleaseJson.getString("name");
         } catch (JSONException e) {
@@ -102,6 +109,8 @@ public class OTAUtils {
     }
 
     public String getUpdateDescription() {
+        if (mReleaseJson == null) return null;
+
         try {
             return mReleaseJson.getString("body");
         } catch (JSONException e) {
@@ -110,10 +119,25 @@ public class OTAUtils {
     }
 
     public String getDownloadUrl() {
+        if (mReleaseJson == null) return null;
+
         try {
-            return mReleaseJson.getJSONArray("assets")
-                    .getJSONObject(0)
-                    .getString("browser_download_url");
+            var assets = mReleaseJson.getJSONArray("assets");
+            String fallback = null;
+
+            for (int i = 0; i < assets.length(); i++) {
+                var asset = assets.getJSONObject(i);
+                String name = asset.optString("name", "");
+                String url = asset.optString("browser_download_url", "");
+
+                if (TextUtils.isEmpty(url)) continue;
+                if (name.equalsIgnoreCase("VTLite.apk")) return url;
+                if (name.toLowerCase(Locale.ROOT).endsWith(".apk") && fallback == null) {
+                    fallback = url;
+                }
+            }
+
+            return fallback;
         } catch (JSONException e) {
             return null;
         }

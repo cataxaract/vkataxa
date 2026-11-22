@@ -18,28 +18,59 @@ import java.io.File;
 
 public class OTADownloader {
 
+    private static volatile boolean sRegistered = false;
+    private static volatile long sDownloadId = -1L;
+    private static volatile String sCommitSHA = "";
+
     private static final BroadcastReceiver callback = new BroadcastReceiver() {
         @SuppressLint("Range")
         @Override
         public void onReceive(Context context, Intent intent) {
             var extras = intent.getExtras();
-            if (extras == null || !intent.getAction().equals(DownloadManager.ACTION_DOWNLOAD_COMPLETE))
-                return;
+            if (extras == null || !DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) return;
 
-            var query = new DownloadManager.Query();
-            var id = extras.getLong(DownloadManager.EXTRA_DOWNLOAD_ID);
-            query.setFilterById(id);
-            var manager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
-            var cursor = manager.query(query);
-            if (cursor.moveToFirst()) {
-                @SuppressLint("Range") var status = cursor.getInt(cursor.getColumnIndex(DownloadManager.COLUMN_STATUS));
-                if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                    var uriStr = cursor.getString(cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI));
-                    var apk = new File(uriStr.replace("file://", ""));
-                    var uri = FileProvider.getUriForFile(context, "com.vtosters.lite.common.VKFileProvider", apk);
-                    APKInstallActivity.installOta(context, uri);
-                } else if (status == DownloadManager.STATUS_FAILED) {
-                    AndroidUtils.sendToast(context.getString(R.string.downloaderr));
+            long id = extras.getLong(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
+            if (id != sDownloadId) return;
+
+            try {
+                var query = new DownloadManager.Query();
+                query.setFilterById(id);
+
+                var manager = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
+                if (manager == null) return;
+
+                try (var cursor = manager.query(query)) {
+                    if (!cursor.moveToFirst()) return;
+
+                    var status = cursor.getInt(cursor.getColumnIndex(DownloadManager.COLUMN_STATUS));
+                    if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                        var uriStr = cursor.getString(cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI));
+                        File apk = uriStr != null ? new File(uriStr.replace("file://", "")) : null;
+
+                        if (apk == null || !apk.exists()) {
+                            apk = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "VTLite-" + sCommitSHA + ".apk");
+                        }
+
+                        if (apk.exists()) {
+                            var uri = FileProvider.getUriForFile(context, "com.vtosters.lite.common.VKFileProvider", apk);
+                            APKInstallActivity.installOta(context, uri);
+                        } else {
+                            AndroidUtils.sendToast(context.getString(R.string.downloaderr));
+                        }
+                    } else if (status == DownloadManager.STATUS_FAILED) {
+                        AndroidUtils.sendToast(context.getString(R.string.downloaderr));
+                    }
+                }
+            } catch (Throwable th) {
+                th.printStackTrace();
+                AndroidUtils.sendToast(context.getString(R.string.downloaderr));
+            } finally {
+                sDownloadId = -1L;
+                sRegistered = false;
+                try {
+                    context.getApplicationContext().unregisterReceiver(this);
+                } catch (Throwable ignored) {
+                    // Receiver was already unregistered.
                 }
             }
         }
@@ -50,7 +81,14 @@ public class OTADownloader {
         try {
             var uri = Uri.parse(url);
 
-            context.registerReceiver(callback, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+            synchronized (OTADownloader.class) {
+                if (!sRegistered) {
+                    context.registerReceiver(callback, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+                    sRegistered = true;
+                }
+            }
+
+            sCommitSHA = commitSHA;
 
             var request = new DownloadManager.Request(uri);
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
@@ -58,9 +96,20 @@ public class OTADownloader {
             request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "VTLite-" + commitSHA + ".apk");
 
             var manager = (DownloadManager) AndroidUtils.getGlobalContext().getSystemService(Context.DOWNLOAD_SERVICE);
-            manager.enqueue(request);
+            if (manager == null) throw new IllegalStateException("DownloadManager is unavailable");
+
+            sDownloadId = manager.enqueue(request);
         } catch (Exception e) {
             e.printStackTrace();
+
+            if (sRegistered && sDownloadId == -1L) {
+                sRegistered = false;
+                try {
+                    context.unregisterReceiver(callback);
+                } catch (Throwable ignored) {
+                    // Receiver was already unregistered.
+                }
+            }
 
             new VkAlertDialog.Builder(context)
                     .setTitle(R.string.update_error)
@@ -71,7 +120,7 @@ public class OTADownloader {
                     .setNeutralButton(R.string.yes,
                             (dialog, which) -> {
                                 var intent = new Intent(Intent.ACTION_VIEW)
-                                        .setData(Uri.parse("https://github.com/vtosters/lite/releases/latest/download/VTLite.apk"));
+                                        .setData(Uri.parse("https://github.com/cataxaract/vkataxa/releases/latest/download/VTLite.apk"));
                                 context.startActivity(intent);
                             }
                     )
