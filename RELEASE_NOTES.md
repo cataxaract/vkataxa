@@ -1,3 +1,16 @@
+## v1.0.5
+
+### Added
+- Anti-delete settings now include separate switches for restoring deleted photos and highlighting kept messages.
+
+### Fixed
+- Fixed the endless "Update" prompt: the release tag is resolved to its commit, the installed commit is compared through GitHub, older builds are not offered as updates, skipped or handled releases are remembered, automatic checks are limited to once every 12 hours, and the update dialog has a "Not now" button.
+- The "About modification" section now links to `cataxaract/vkataxa` (GitHub, releases, issues and README) instead of VTosters; the commit link points to this repository.
+- Update checks are no longer hidden in dev/debug-signed builds.
+
+### Improved
+- README rewritten with the fork feature comparison, settings paths, OTA behavior, build/test instructions and known limitations.
+
 ## v1.0.4
 
 ### Fixed
