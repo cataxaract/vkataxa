@@ -116,6 +116,18 @@ public class RecoloredDrawable extends Drawable implements Drawable.Callback {
     }
 
     @Override
+    public void setTint(int tintColor) {
+        a(new ColorStateList(new int[][]{new int[0]}, new int[]{tintColor}));
+    }
+
+    @Override
+    public void setTintList(ColorStateList tint) {
+        if (tint != null) {
+            a(tint);
+        }
+    }
+
+    @Override
     public void unscheduleDrawable(@NonNull Drawable drawable, @NonNull Runnable runnable) {
         unscheduleSelf(runnable);
     }

@@ -8,6 +8,7 @@
 ### Fixed
 - Saving a deleted photo no longer depends on the standard save menu item being present; the custom save action appears when a local deleted photo exists.
 - The deleted-photo save confirmation now uses the localized "Photo saved" string instead of a hardcoded message.
+- The deleted-message dot now renders red instead of the theme accent: `RecoloredDrawable` now applies `setTint`/`setTintList`, so the status indicator can be recolored.
 
 ### Improved
 - Nested messages are decrypted only for deleted messages, and the whole deleted-message parser exits early when anti-delete is disabled; loading old history no longer performs unnecessary decryption work.
