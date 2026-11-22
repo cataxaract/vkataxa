@@ -1,5 +1,6 @@
 package ru.vtosters.hooks;
 
+import android.app.Activity;
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
@@ -12,8 +13,11 @@ import android.text.TextUtils;
 import android.util.Log;
 import android.view.View;
 import android.widget.Toast;
+import com.vk.core.dialogs.alert.VkAlertDialog;
 import com.vk.core.network.Network;
 import com.vk.dto.common.AttachmentWithMedia;
+import com.vk.im.engine.ImEngine1;
+import com.vk.im.engine.events.OnMsgDeleteEvent;
 import com.vk.im.engine.events.OnMsgUpdateEvent;
 import com.vk.im.engine.internal.longpoll.tasks.MsgDeleteLpTask;
 import com.vk.im.engine.internal.storage.StorageEnvironment;
@@ -25,7 +29,9 @@ import com.vk.im.engine.models.attaches.AttachWithImage;
 import com.vk.im.engine.models.messages.Msg;
 import com.vk.im.engine.models.messages.MsgFromUser;
 import com.vk.im.engine.models.messages.NestedMsg;
+import com.vk.im.engine.utils.collection.IntArrayList;
 import com.vk.libsqliteext.CustomSqliteExtensionsKt;
+import com.vtosters.lite.R;
 import com.vtosters.lite.attachments.PhotoAttachment;
 import io.requery.android.database.sqlite.SQLiteDatabase;
 import io.requery.android.database.sqlite.SQLiteOpenHelper;
@@ -34,6 +40,7 @@ import okhttp3.Response;
 import okio.BufferedSink;
 import okio.Okio;
 import ru.vtosters.lite.concurrent.VTExecutors;
+import ru.vtosters.lite.utils.AndroidUtils;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -113,7 +120,11 @@ public class DeletedMessagesHook {
     }
 
     public static boolean isDeletedMessage(Msg msg) {
-        if (!hook() || msg == null) return false;
+        return hook() && isDeletedMessageInternal(msg);
+    }
+
+    private static boolean isDeletedMessageInternal(Msg msg) {
+        if (msg == null) return false;
 
         int localId = msg.getLocalId();
         return (localId != 0 && sDeletedLocalIds.contains(localId)) || sDeletedLegacyVkIds.contains(msg.C1());
@@ -124,10 +135,6 @@ public class DeletedMessagesHook {
 
         int localId = msg.getLocalId();
         return (localId != 0 && sDeletedLocalIds.contains(localId)) || sDeletedVkIds.contains(msg.t1());
-    }
-
-    private static boolean hasDeletedMessages() {
-        return !sDeletedLocalIds.isEmpty() || !sDeletedVkIds.isEmpty() || !sDeletedLegacyVkIds.isEmpty();
     }
 
     public static void applyTransparency(View view, Msg msg) {
@@ -144,17 +151,15 @@ public class DeletedMessagesHook {
     }
 
     public static void setBodyDBParser(Msg msg) {
-        if (!(msg instanceof MsgFromUser)) return;
+        if (!hook() || !(msg instanceof MsgFromUser)) return;
 
         try {
             MsgFromUser msgFromUser = (MsgFromUser) msg;
-            List<NestedMsg> nestedMsgs = msgFromUser.w0();
 
-            if (hasDeletedMessages()) {
+            if (isDeletedMessageInternal(msgFromUser)) {
+                List<NestedMsg> nestedMsgs = msgFromUser.w0();
+
                 checkForNestedMsg(nestedMsgs);
-            }
-
-            if (isDeletedMessage(msgFromUser)) {
                 restoreDeletedPhotos(msg.C1(), msgFromUser.J0(), nestedMsgs);
                 editTextOfMsg(msgFromUser);
             }
@@ -387,6 +392,13 @@ public class DeletedMessagesHook {
         }
     }
 
+    public static boolean hasDeletedPhoto(AttachmentWithMedia attachment) {
+        if (!hook() || !(attachment instanceof PhotoAttachment)) return false;
+
+        int photoId = attachment.getId();
+        return photoId != 0 && findDeletedPhotoForPhotoId(photoId) != null;
+    }
+
     public static boolean saveDeletedPhotoToGallery(AttachmentWithMedia attachment) {
         if (!hook() || !(attachment instanceof PhotoAttachment)) return false;
 
@@ -396,6 +408,179 @@ public class DeletedMessagesHook {
         File source = findDeletedPhotoForPhotoId(photoId);
 
         return source != null && saveFileToGallery(source);
+    }
+
+    public static boolean saveUriToGallery(Uri uri) {
+        if (!hook() || uri == null || !"file".equals(uri.getScheme())) return false;
+
+        File source = new File(uri.getPath());
+        return source.exists() && source.length() > 0 && saveFileToGallery(source);
+    }
+
+    public static void confirmClearDeletedMessages(Activity activity, int peerId) {
+        if (activity == null || !hook()) return;
+
+        new VkAlertDialog.Builder(activity)
+                .setTitle(AndroidUtils.getString("clear_deleted_messages"))
+                .setMessage(AndroidUtils.getString("clear_deleted_messages_confirm"))
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    int removed = clearDeletedMessagesForPeer(peerId);
+                    Toast.makeText(
+                            activity,
+                            AndroidUtils.getString(removed > 0 ? "clear_deleted_messages_done" : "clear_deleted_messages_empty"),
+                            Toast.LENGTH_SHORT
+                    ).show();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    public static int clearDeletedMessagesForPeer(int peerId) {
+        if (!hook()) return 0;
+
+        Set<Integer> localIds = ConcurrentHashMap.newKeySet();
+        Set<Integer> vkIds = ConcurrentHashMap.newKeySet();
+
+        DeletedMessagesDBHelper helper = getDatabase();
+        if (helper != null) {
+            try {
+                helper.loadDeletedIdsForPeer(peerId, localIds, vkIds);
+            } catch (Throwable th) {
+                Log.w("DeletedMessagesHook", "Failed to load deleted ids for chat", th);
+            }
+        }
+
+        SQLiteDatabase db = sVKSQLiteDatabase;
+        if (db != null) {
+            String query = "SELECT local_id, vk_id FROM messages WHERE dialog_id = " + peerId;
+
+            try (Cursor cursor = CustomSqliteExtensionsKt.a(db, query)) {
+                if (cursor != null) {
+                    while (cursor.moveToNext()) {
+                        int localId = cursor.getInt(0);
+                        int vkId = cursor.getInt(1);
+
+                        if (sDeletedLocalIds.contains(localId) || sDeletedLegacyVkIds.contains(vkId)) {
+                            localIds.add(localId);
+                            vkIds.add(vkId);
+                        }
+                    }
+                }
+            } catch (Throwable th) {
+                Log.w("DeletedMessagesHook", "Failed to load chat messages for cleanup", th);
+            }
+        }
+
+        int removed = 0;
+        if (helper != null) {
+            try {
+                removed = helper.deleteForPeer(peerId, localIds, vkIds);
+            } catch (Throwable th) {
+                Log.w("DeletedMessagesHook", "Failed to clear deleted messages", th);
+            }
+        }
+
+        removed += deleteMessagesFromVkDb(peerId, localIds);
+        removed += deleteDeletedPhotoFiles(vkIds);
+
+        reloadMessagesList();
+        notifyMessagesDeleted(peerId, vkIds);
+
+        return removed;
+    }
+
+    private static int deleteMessagesFromVkDb(int peerId, Set<Integer> localIds) {
+        SQLiteDatabase db = sVKSQLiteDatabase;
+        if (db == null || localIds.isEmpty()) return 0;
+
+        Object[] values = localIds.toArray();
+        int removed = 0;
+        int chunkSize = 500;
+
+        for (int start = 0; start < values.length; start += chunkSize) {
+            int end = Math.min(start + chunkSize, values.length);
+            StringBuilder placeholders = new StringBuilder();
+            String[] idArgs = new String[end - start];
+
+            for (int i = start; i < end; i++) {
+                if (i > start) placeholders.append(',');
+                placeholders.append('?');
+                idArgs[i - start] = String.valueOf(values[i]);
+            }
+
+            String idList = placeholders.toString();
+            String[] messageArgs = new String[idArgs.length + 1];
+            messageArgs[0] = String.valueOf(peerId);
+            System.arraycopy(idArgs, 0, messageArgs, 1, idArgs.length);
+
+            try {
+                removed += db.delete("messages", "dialog_id = ? AND local_id IN (" + idList + ")", messageArgs);
+            } catch (Throwable th) {
+                Log.w("DeletedMessagesHook", "Failed to delete messages", th);
+            }
+
+            try {
+                db.delete("message_attaches", "msg_local_id IN (" + idList + ")", idArgs);
+            } catch (Throwable th) {
+                Log.w("DeletedMessagesHook", "Failed to delete message attachments", th);
+            }
+
+            try {
+                db.delete("bot_btn_in_loading", "msg_local_id IN (" + idList + ")", idArgs);
+            } catch (Throwable th) {
+                Log.w("DeletedMessagesHook", "Failed to delete message loading state", th);
+            }
+
+            try {
+                db.delete("messages_search", "docid IN (" + idList + ")", idArgs);
+            } catch (Throwable th) {
+                Log.w("DeletedMessagesHook", "Failed to delete message search entry", th);
+            }
+        }
+
+        return removed;
+    }
+
+    private static void notifyMessagesDeleted(int peerId, Set<Integer> localIds) {
+        if (localIds.isEmpty()) return;
+
+        try {
+            IntArrayList ids = new IntArrayList();
+            for (int localId : localIds) {
+                ids.add(localId);
+            }
+
+            ImEngine1.a().a(new OnMsgDeleteEvent(DeletedMessagesHook.class.getSimpleName(), peerId, ids));
+        } catch (Throwable th) {
+            Log.w("DeletedMessagesHook", "Failed to notify about deleted messages", th);
+        }
+    }
+
+    private static int deleteDeletedPhotoFiles(Set<Integer> vkIds) {
+        if (vkIds.isEmpty()) return 0;
+
+        File[] files = getDeletedPhotosDir().listFiles();
+        if (files == null) return 0;
+
+        int removed = 0;
+        for (File file : files) {
+            if (!file.isFile()) continue;
+
+            String name = file.getName();
+            int separator = name.indexOf('_');
+            if (separator <= 0) continue;
+
+            try {
+                int messageId = Integer.parseInt(name.substring(0, separator));
+                if (vkIds.contains(messageId) && file.delete()) {
+                    removed++;
+                }
+            } catch (NumberFormatException ignored) {
+                // Not a deleted photo file.
+            }
+        }
+
+        return removed;
     }
 
     public static boolean saveDeletedImageToGallery(AttachWithImage attachment) {
@@ -422,7 +607,7 @@ public class DeletedMessagesHook {
                 saveToGalleryLegacy(context, source, name);
             }
 
-            Toast.makeText(context, "Фото сохранено", Toast.LENGTH_SHORT).show();
+            Toast.makeText(context, context.getString(R.string.photo_save_ok), Toast.LENGTH_SHORT).show();
             return true;
         } catch (Throwable th) {
             Log.w("DeletedMessagesHook", "Failed to save deleted photo to gallery", th);
@@ -670,6 +855,63 @@ public class DeletedMessagesHook {
             }
 
             db.insertWithOnConflict("deleted_msgs", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+        }
+
+        public void loadDeletedIdsForPeer(int peerId, Set<Integer> localIds, Set<Integer> vkIds) {
+            SQLiteDatabase db = getReadableDatabase();
+
+            try (Cursor cursor = db.query(
+                    "deleted_msgs",
+                    new String[]{"localId", "msgId"},
+                    "peerId = ?",
+                    new String[]{String.valueOf(peerId)},
+                    null, null, null)) {
+                int localIndex = cursor.getColumnIndex("localId");
+                int msgIndex = cursor.getColumnIndex("msgId");
+
+                while (cursor.moveToNext()) {
+                    if (localIndex >= 0 && !cursor.isNull(localIndex)) {
+                        localIds.add(cursor.getInt(localIndex));
+                    }
+                    if (msgIndex >= 0 && !cursor.isNull(msgIndex)) {
+                        vkIds.add(cursor.getInt(msgIndex));
+                    }
+                }
+            }
+        }
+
+        public int deleteForPeer(int peerId, Set<Integer> localIds, Set<Integer> vkIds) {
+            SQLiteDatabase db = getWritableDatabase();
+            int removed = db.delete("deleted_msgs", "peerId = ?", new String[]{String.valueOf(peerId)});
+
+            removed += deleteInChunks(db, "localId IN (%s)", localIds);
+            removed += deleteInChunks(db, "localId IS NULL AND msgId IN (%s)", vkIds);
+
+            return removed;
+        }
+
+        private static int deleteInChunks(SQLiteDatabase db, String whereTemplate, Set<Integer> ids) {
+            if (ids.isEmpty()) return 0;
+
+            Object[] values = ids.toArray();
+            int removed = 0;
+            int chunkSize = 500;
+
+            for (int start = 0; start < values.length; start += chunkSize) {
+                int end = Math.min(start + chunkSize, values.length);
+                StringBuilder placeholders = new StringBuilder();
+                String[] args = new String[end - start];
+
+                for (int i = start; i < end; i++) {
+                    if (i > start) placeholders.append(',');
+                    placeholders.append('?');
+                    args[i - start] = String.valueOf(values[i]);
+                }
+
+                removed += db.delete("deleted_msgs", whereTemplate.replace("%s", placeholders.toString()), args);
+            }
+
+            return removed;
         }
 
         public void loadDeletedIds(Set<Integer> localIds, Set<Integer> vkIds, Set<Integer> legacyVkIds) {

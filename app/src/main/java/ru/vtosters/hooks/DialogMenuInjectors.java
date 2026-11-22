@@ -9,6 +9,8 @@ import ru.vtosters.lite.downloaders.messages.HtmlDialogDownloaderFormatProvider;
 import ru.vtosters.lite.downloaders.messages.MessagesDownloader;
 import ru.vtosters.lite.encryption.EncryptProvider;
 import ru.vtosters.lite.encryption.base.IMProcessor;
+import ru.vtosters.lite.utils.AndroidUtils;
+import ru.vtosters.lite.utils.LifecycleUtils;
 
 import java.io.File;
 import java.util.LinkedHashMap;
@@ -27,6 +29,10 @@ public class DialogMenuInjectors {
         list.add(DialogAction.STAT);
         list.add(DialogAction.DOWNLOAD);
 
+        if (DeletedMessagesHook.hook()) {
+            list.add(DialogAction.CLEAR_DELETED);
+        }
+
         list.add(DialogAction.pinmsg);
         list.add(DialogAction.unpinmsg);
 
@@ -44,6 +50,7 @@ public class DialogMenuInjectors {
     public static LinkedHashMap<DialogAction, Integer> injectToHashMap(LinkedHashMap<DialogAction, Integer> hashMap) {
 //        hashMap.put(DialogAction.STAT, AndroidUtils.getIdentifier("dialogstats", "string"));
         hashMap.put(DialogAction.DOWNLOAD, R.string.download_dl);
+        hashMap.put(DialogAction.CLEAR_DELETED, AndroidUtils.getIdentifier("clear_deleted_messages", "string"));
 
         hashMap.put(DialogAction.DNR_ON, R.string.DNR_ON);
         hashMap.put(DialogAction.DNR_OFF, R.string.DNR_OFF);
@@ -80,6 +87,10 @@ public class DialogMenuInjectors {
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
+                return true;
+            }
+            case CLEAR_DELETED -> {
+                DeletedMessagesHook.confirmClearDeletedMessages(LifecycleUtils.getCurrentActivity(), peerId);
                 return true;
             }
             case DNR_ON, DNR_OFF -> {

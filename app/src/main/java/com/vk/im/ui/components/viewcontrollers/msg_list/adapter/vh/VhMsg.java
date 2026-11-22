@@ -6,6 +6,7 @@
 package com.vk.im.ui.components.viewcontrollers.msg_list.adapter.vh;
 
 import android.content.Context;
+import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
@@ -49,6 +50,7 @@ import com.vk.im.ui.views.msg.bubble.MsgBubbleView;
 import com.vk.im.ui.views.sticker.StickerAnimationState;
 import kotlin.Unit;
 import kotlin.jvm.b.Functions;
+import ru.vtosters.hooks.DeletedMessagesHook;
 import ru.vtosters.lite.themes.ThemesHacks;
 
 public class VhMsg extends VhBase implements SwipeToReplyItemTouchCallback.b {
@@ -452,6 +454,13 @@ public class VhMsg extends VhBase implements SwipeToReplyItemTouchCallback.b {
                 ViewExtKt.a(var13, var8.left, var8.top, var8.right, var8.bottom);
             }
 
+        }
+
+        if (DeletedMessagesHook.isDeletedMessage(this.d0)) {
+            this.f.setVisibility(View.VISIBLE);
+            this.h.setVisibility(View.VISIBLE);
+            this.f.setUnreadIconsColor(Color.RED);
+            this.f.a(MsgStatus.UNREAD, false);
         }
     }
 

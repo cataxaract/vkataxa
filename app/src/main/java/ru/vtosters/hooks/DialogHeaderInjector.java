@@ -14,6 +14,7 @@ import ru.vtosters.lite.downloaders.messages.MessagesDownloader;
 import ru.vtosters.lite.encryption.EncryptProvider;
 import ru.vtosters.lite.encryption.base.IMProcessor;
 import ru.vtosters.lite.utils.AndroidUtils;
+import ru.vtosters.lite.utils.LifecycleUtils;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -62,6 +63,10 @@ public class DialogHeaderInjector {
                 }
                 return true;
             }
+            case CLEAR_DELETED -> {
+                DeletedMessagesHook.confirmClearDeletedMessages(LifecycleUtils.getCurrentActivity(), peerId);
+                return true;
+            }
             case STAT -> {
                 Requests.hookDialogInfo(dialog);
                 return true;
@@ -83,6 +88,10 @@ public class DialogHeaderInjector {
         actions.add(DialogAction.STAT);
 
         actions.add(DialogAction.DOWNLOAD);
+
+        if (DeletedMessagesHook.hook()) {
+            actions.add(DialogAction.CLEAR_DELETED);
+        }
 
         if (MessagesActivityHook.isDnrEnabledFor(peerId)) {
             actions.add(DialogAction.DNR_OFF);
@@ -113,6 +122,10 @@ public class DialogHeaderInjector {
 
 //        list.add(new DialogActionsListView.b.a(DialogAction.STAT, 1, R.attr.im_ic_stats, R.string.dialogstats)); // DialogAction, Int, Icon, String
         list.add(new DialogActionsListView.b.a(DialogAction.DOWNLOAD, 1, com.vtosters.lite.R.attr.im_ic_msgdl, com.vtosters.lite.R.string.download_dl)); // DialogAction, Int, Icon, String
+
+        if (DeletedMessagesHook.hook()) {
+            list.add(new DialogActionsListView.b.a(DialogAction.CLEAR_DELETED, 2, com.vtosters.lite.R.attr.im_ic_delete, AndroidUtils.getIdentifier("clear_deleted_messages", "string")));
+        }
 
         list.add(new DialogActionsListView.b.a(DialogAction.DNR_ON, 2, com.vtosters.lite.R.attr.im_ic_pinned_msg_hide, com.vtosters.lite.R.string.DNR_ON)); // DialogAction, Int, Icon, String
         list.add(new DialogActionsListView.b.a(DialogAction.DNR_OFF, 2, com.vtosters.lite.R.attr.im_ic_pinned_msg_show, com.vtosters.lite.R.string.DNR_OFF)); // DialogAction, Int, Icon, String

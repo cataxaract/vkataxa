@@ -78,6 +78,25 @@ public class PhotoViewer {
                     return null;
                 }
         );
+
+        String imageUrl = getImageUrlFromAttachment(attachment);
+        if (imageUrl.startsWith("file://") || DeletedMessagesHook.hasDeletedPhoto(attachment)) {
+            actionPopup.a(
+                    R.string.save_on_device,
+                    RecolorUtils.fixActionMenuIcons(R.drawable.ic_download_outline_28),
+                    false,
+                    () -> {
+                        boolean saved = DeletedMessagesHook.saveDeletedPhotoToGallery(attachment);
+                        if (!saved && imageUrl.startsWith("file://")) {
+                            saved = DeletedMessagesHook.saveUriToGallery(Uri.parse(imageUrl));
+                        }
+                        if (!saved) {
+                            ToastUtils.a(R.string.photo_get_error);
+                        }
+                        return null;
+                    }
+            );
+        }
     }
 
     @SuppressLint("NonConstantResourceId")

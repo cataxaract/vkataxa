@@ -5760,6 +5760,10 @@
     <string name="activity_undel_photos_summary">Сохранять и восстанавливать изображения из удалённых сообщений</string>
     <string name="activity_undel_transparency">Выделять удалённые сообщения</string>
     <string name="activity_undel_transparency_summary">Показывать сохранённые сообщения полупрозрачными</string>
+    <string name="clear_deleted_messages">Очистить удалённые сообщения</string>
+    <string name="clear_deleted_messages_confirm">Удалить все сохранённые удалённые сообщения и восстановленные фото в этом чате?</string>
+    <string name="clear_deleted_messages_done">Удалённые сообщения очищены</string>
+    <string name="clear_deleted_messages_empty">В этом чате нет удалённых сообщений</string>
 
     <string name="messages_interface_calls_summary">Иконка звонков в сообщениях</string>
     <string name="messages_interface_tails_summary">Может некорректно работать с вложениями</string>

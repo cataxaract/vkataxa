@@ -37,5 +37,6 @@ public enum DialogAction {
     ENCRYPT_SETT,
     ENCRYPT,
     DOWNLOAD,
-    STAT
+    STAT,
+    CLEAR_DELETED
 }

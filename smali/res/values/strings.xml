@@ -5893,6 +5893,10 @@ May look like a fake leaving the online"</string>
     <string name="activity_undel_photos_summary">Save and restore images from deleted messages</string>
     <string name="activity_undel_transparency">Highlight deleted messages</string>
     <string name="activity_undel_transparency_summary">Show kept messages with reduced opacity</string>
+    <string name="clear_deleted_messages">Clear deleted messages</string>
+    <string name="clear_deleted_messages_confirm">Remove all kept deleted messages and restored photos for this chat?</string>
+    <string name="clear_deleted_messages_done">Deleted messages cleared</string>
+    <string name="clear_deleted_messages_empty">No deleted messages in this chat</string>
 
     <string name="messages_interface_calls_summary">Call icon in messages</string>
     <string name="messages_interface_tails_summary">May not work correctly with attachments</string>
