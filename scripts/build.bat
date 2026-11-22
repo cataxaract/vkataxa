@@ -25,6 +25,22 @@ if "%ERRORLEVEL%" == "0" (
 )
 
 echo.
+echo %ESC%[1;4mZipaligning...%ESC%[0m
+echo.
+where zipalign >nul 2>nul
+if errorlevel 1 (
+    echo %ESC%[33mzipalign not found, alignment skipped%ESC%[0m
+) else (
+    call zipalign -p -f 4 ..\build-output\VTLite.apk ..\build-output\VTLite.apk_aligned
+    if errorlevel 1 (
+        echo %ESC%[31mZipalign failed%ESC%[0m
+        exit /B 1
+    )
+    move /Y ..\build-output\VTLite.apk_aligned ..\build-output\VTLite.apk >nul
+    echo %ESC%[92mZipalign successful%ESC%[0m
+)
+
+echo.
 echo %ESC%[1;4mSign apk...%ESC%[0m
 echo.
 call java -jar ../scripts/apksigner.jar sign --ks ../scripts/debug.keystore --ks-key-alias androiddebugkey --ks-pass pass:android ../build-output/VTLite.apk
