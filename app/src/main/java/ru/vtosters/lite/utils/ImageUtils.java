@@ -83,11 +83,8 @@ public class ImageUtils {
         if (pref > 0) {
             path.addRoundRect(new RectF(0, 0, width, height), pref, pref, Path.Direction.CCW);
         } else {
-            path.addCircle(
-                    (float) (width / 2),
-                    (float) (height / 2),
-                    (float) Math.min(width, (height / 2)),
-                    Path.Direction.CCW);
+            float radius = Math.min(width, height) / 2f;
+            path.addCircle(width / 2f, height / 2f, radius, Path.Direction.CCW);
         }
 
         canvas.clipPath(path);

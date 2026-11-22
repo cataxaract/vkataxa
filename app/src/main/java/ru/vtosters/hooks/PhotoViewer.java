@@ -7,6 +7,8 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.MenuItem;
@@ -24,6 +26,7 @@ import com.vtosters.lite.attachments.DocumentAttachment;
 import com.vtosters.lite.attachments.PhotoAttachment;
 import okhttp3.*;
 import okio.Okio;
+import ru.vtosters.lite.concurrent.VTExecutors;
 import ru.vtosters.lite.di.singleton.VtOkHttpClient;
 import ru.vtosters.lite.themes.utils.RecolorUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
@@ -109,33 +112,47 @@ public class PhotoViewer {
     //endregion
 
     private static void copyImage(AttachmentWithMedia attachment) {
-        var req = new Request.a()
-                .b(getImageUrlFromAttachment(attachment))
-                .a();
-        Network.b(Network.ClientType.CLIENT_API).a(req).a(new Callback() {
-            @Override
-            public void a(Call call, IOException e) {
-                e.printStackTrace();
-            }
+        String url = getImageUrlFromAttachment(attachment);
+        if (TextUtils.isEmpty(url)) return;
 
-            @Override
-            public void a(Call call, Response response)
-                    throws IOException {
-                var tmpImage = new File(AndroidUtils.getGlobalContext().getExternalCacheDir(), attachment.getId() + ".jpg");
-                try (var resp = Network.b(Network.ClientType.CLIENT_IMAGE_LOADER).a(req).execute();
-                     var sink = Okio.a(Okio.b(tmpImage))) {
-                    sink.a(resp.a().f());
-                    var manager = (ClipboardManager) AndroidUtils.getGlobalContext().getSystemService(Context.CLIPBOARD_SERVICE);
-                    var uri = FileProvider.getUriForFile(
-                            AndroidUtils.getGlobalContext(),
-                            "com.vtosters.lite.common.VKFileProvider",
-                            tmpImage);
-                    var data = ClipData.newUri(
-                            AndroidUtils.getGlobalContext().getContentResolver(),
-                            "image",
-                            uri);
-                    manager.setPrimaryClip(data);
+        var req = new Request.a()
+                .b(url)
+                .a();
+
+        VTExecutors.getIoExecutor().execute(() -> {
+            Context context = AndroidUtils.getGlobalContext();
+            File cacheDir = context.getExternalCacheDir();
+            if (cacheDir == null) cacheDir = context.getCacheDir();
+
+            File tmpImage = new File(cacheDir, "vkataxa_" + attachment.getId() + "_" + System.currentTimeMillis() + ".jpg");
+
+            try (Response response = Network.b(Network.ClientType.CLIENT_IMAGE_LOADER).a(req).execute()) {
+                if (!response.h() || response.a() == null) return;
+
+                try (var sink = Okio.a(Okio.b(tmpImage))) {
+                    sink.a(response.a().f());
                 }
+
+                var uri = FileProvider.getUriForFile(
+                        context,
+                        "com.vtosters.lite.common.VKFileProvider",
+                        tmpImage);
+                var data = ClipData.newUri(
+                        context.getContentResolver(),
+                        "image",
+                        uri);
+
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    var manager = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (manager == null) return;
+
+                    manager.setPrimaryClip(data);
+                    Toast.makeText(context, R.string.copied_to_clipboard, Toast.LENGTH_SHORT).show();
+                });
+            } catch (Throwable th) {
+                Log.w("PhotoViewer", "Failed to copy image", th);
+                new Handler(Looper.getMainLooper()).post(() ->
+                        Toast.makeText(context, R.string.photo_get_error, Toast.LENGTH_SHORT).show());
             }
         });
     }
@@ -180,7 +197,12 @@ public class PhotoViewer {
         List<ImageSize> imageSizes;
 
         if (attachment instanceof PhotoAttachment) {
-            imageSizes = ((PhotoAttachment) attachment).D.Q.t1();
+            var photo = (PhotoAttachment) attachment;
+            if (photo.D == null || photo.D.Q == null) {
+                ToastUtils.a(R.string.photo_get_error);
+                return "";
+            }
+            imageSizes = photo.D.Q.t1();
         } else if (attachment instanceof DocumentAttachment && ((DocumentAttachment) attachment).J != null) {
             imageSizes = ((DocumentAttachment) attachment).J.t1();
         } else {
@@ -188,13 +210,14 @@ public class PhotoViewer {
             return "";
         }
 
-        if (imageSizes.isEmpty()) return "";
+        if (imageSizes == null || imageSizes.isEmpty()) return "";
 
-        var max = imageSizes.get(0);
-        for (int i = 1; i < imageSizes.size(); i++) {
-            var tmp = imageSizes.get(i);
-            if (max.t1() < tmp.t1()) max = tmp;
+        ImageSize max = null;
+        for (ImageSize size : imageSizes) {
+            if (size != null && (max == null || max.t1() < size.t1())) {
+                max = size;
+            }
         }
-        return max.url;
+        return max != null && max.url != null ? max.url : "";
     }
 }

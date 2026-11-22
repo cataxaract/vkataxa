@@ -17,8 +17,8 @@ import java.util.HashMap;
 
 public class AnalyticsHelper {
     private static final boolean analyticsDisabled = Preferences.getBoolValue("analyticsDisabled", false) || Preferences.serverFeaturesDisable();
-
     private static final String key = BuildConfig.APPCENTER_KEY;
+    private static volatile boolean started = false;
 
     private static final Channel.Listener patchDeviceListener = new AbstractChannelListener() {
         @Override
@@ -55,30 +55,28 @@ public class AnalyticsHelper {
 
     @SuppressWarnings("ConstantConditions")
     public static void start(Application application) {
-        if (analyticsDisabled || key.isEmpty()) {
-            setAnalyticsStatus(false);
-            return;
-        }
+        if (started || analyticsDisabled || key.isEmpty()) return;
 
         AppCenter.start(application, AnalyticsHelper.key, Analytics.class, Crashes.class);
+        started = true;
         patchDevice();
         setAnalyticsStatus(true);
     }
 
     public static void trackEvent(String event) {
-        if (analyticsDisabled) return;
+        if (!started || analyticsDisabled) return;
 
         Analytics.trackEvent(event);
     }
 
     public static void trackEvent(String event, HashMap<String, String> map) {
-        if (analyticsDisabled) return;
+        if (!started || analyticsDisabled) return;
 
         Analytics.trackEvent(event, map);
     }
 
     public static void trackSettingsFragment(Class<? extends TrackedMaterialPreferenceToolbarFragment> fragment) {
-        if (analyticsDisabled) return;
+        if (!started || analyticsDisabled) return;
 
         var props = new HashMap<String, String>();
         props.put("fragment", fragment.getSimpleName());
@@ -87,12 +85,14 @@ public class AnalyticsHelper {
     }
 
     public static void trackError(Throwable th) {
-        if (analyticsDisabled) return;
+        if (!started || analyticsDisabled) return;
 
         Crashes.trackError(th);
     }
 
     public static void setAnalyticsStatus(Boolean bool) {
+        if (!started) return;
+
         Analytics.setEnabled(bool && Preferences.isValidSignature());
         Crashes.setEnabled(bool && !AndroidUtils.isDebuggable() && Preferences.isValidSignature());
     }

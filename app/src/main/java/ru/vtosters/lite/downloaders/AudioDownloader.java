@@ -106,7 +106,7 @@ public class AudioDownloader {
 
                 @Override
                 public void onFailure(Throwable e) {
-                    throw new RuntimeException(e);
+                    Log.e("AudioDownloader", "Failed to cache playlist thumbnail", e);
                 }
 
                 @Override

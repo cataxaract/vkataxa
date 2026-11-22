@@ -146,7 +146,7 @@ public class ProxyUtils {
         clearProperty("http.proxyUser");
         clearProperty("http.proxyPassword");
         clearProperty("socksProxyHost");
-        clearProperty("socksPortHost");
+        clearProperty("socksProxyPort");
         forceProxyApplying();
     } // Reset all proxies
 }
