@@ -6435,6 +6435,10 @@
     <string name="sett_chats_summ">Активные чаты по обсуждению модификации и многому другому</string>
     <string name="sett_community">Наши сообщества</string>
     <string name="sett_community_summ">Самая свежая информация об обновлениях и не только</string>
+    <string name="sett_github">GitHub</string>
+    <string name="sett_github_summ">Исходный код, issues и релизы</string>
+    <string name="sett_releases">Релизы</string>
+    <string name="sett_releases_summ">Скачать последнюю версию</string>
     <string name="sett_autoupdates">Автоматическое обновление</string>
     <string name="sett_autoupdates_summ">Получать уведомление о выходе новой версии приложения</string>
 

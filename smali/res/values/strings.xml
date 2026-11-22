@@ -6573,6 +6573,10 @@ May look like a fake leaving the online"</string>
     <string name="sett_chats_summ">Live chats to discuss modification and more</string>
     <string name="sett_community">Our communities</string>
     <string name="sett_community_summ">Latest information about updates and more</string>
+    <string name="sett_github">GitHub</string>
+    <string name="sett_github_summ">Source code, issues and releases</string>
+    <string name="sett_releases">Releases</string>
+    <string name="sett_releases_summ">Download the latest version</string>
     <string name="sett_autoupdates">Autoupdate</string>
     <string name="sett_autoupdates_summ">Receive notification when a new version of the application is released</string>
     <string name="update_latest">You have the latest version of the app installed</string>

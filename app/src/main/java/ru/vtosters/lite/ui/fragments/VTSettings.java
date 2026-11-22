@@ -12,13 +12,10 @@ import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.Settings;
 import androidx.annotation.StringRes;
-import androidx.appcompat.app.AlertDialog;
-import androidx.fragment.app.DialogFragment;
 import androidx.preference.Preference;
 import com.aefyr.tsg.g2.TelegramStickersService;
 import com.vk.about.AboutAppFragment;
 import com.vk.balance.BalanceFragment;
-import com.vk.core.dialogs.alert.VkAlertDialog;
 import com.vk.identity.fragments.IdentityListFragment;
 import com.vk.medianative.MediaImageEncoder;
 import com.vk.notifications.settings.NotificationsSettingsFragment;
@@ -55,6 +52,11 @@ import java.util.Locale;
 
 public class VTSettings extends TrackedMaterialPreferenceToolbarFragment {
     public static String ACTION_INVALIDATE_TGS_COUNT = "com.vtosters.lite.intent.action.INVALIDATE_TGS_COUNT";
+
+    private static final String GITHUB_URL = "https://github.com/cataxaract/vkataxa";
+    private static final String RELEASES_URL = GITHUB_URL + "/releases";
+    private static final String ISSUES_URL = GITHUB_URL + "/issues";
+    private static final String README_URL = GITHUB_URL + "#readme";
 
     BroadcastReceiver mTgsReceiver = new BroadcastReceiver() {
         @Override
@@ -641,18 +643,11 @@ public class VTSettings extends TrackedMaterialPreferenceToolbarFragment {
         PreferenceFragmentUtils.addPreference(
                 getPreferenceScreen(),
                 "",
-                AndroidUtils.getString("sett_chats"),
-                AndroidUtils.getString("sett_chats_summ"),
-                R.drawable.ic_message_outline_28,
+                AndroidUtils.getString("sett_github"),
+                AndroidUtils.getString("sett_github_summ"),
+                R.drawable.ic_link_outline_28,
                 preference -> {
-                    var args = new Bundle();
-                    var dialog = new AboutInformation();
-
-                    args.putString("vk_link", "https://vk.me/join/jKE1bIZczHTF2mLkuoiQcd0qIBYgHuGFPRA=");
-                    args.putString("tg_link", "https://t.me/vtosterschat");
-
-                    dialog.setArguments(args);
-                    dialog.show(requireFragmentManager(), "");
+                    requireContext().startActivity(new Intent(Intent.ACTION_VIEW).setData(Uri.parse(GITHUB_URL)));
                     return false;
                 }
         );
@@ -660,18 +655,11 @@ public class VTSettings extends TrackedMaterialPreferenceToolbarFragment {
         PreferenceFragmentUtils.addPreference(
                 getPreferenceScreen(),
                 "",
-                AndroidUtils.getString("sett_community"),
-                AndroidUtils.getString("sett_community_summ"),
-                R.drawable.users_3_outline_28,
+                AndroidUtils.getString("sett_releases"),
+                AndroidUtils.getString("sett_releases_summ"),
+                R.drawable.ic_download_outline_28,
                 preference -> {
-                    var args = new Bundle();
-                    var dialog = new AboutInformation();
-
-                    args.putString("vk_link", "https://vk.com/vtosters_official");
-                    args.putString("tg_link", "https://t.me/vtosters");
-
-                    dialog.setArguments(args);
-                    dialog.show(requireFragmentManager(), "");
+                    requireContext().startActivity(new Intent(Intent.ACTION_VIEW).setData(Uri.parse(RELEASES_URL)));
                     return false;
                 }
         );
@@ -683,7 +671,7 @@ public class VTSettings extends TrackedMaterialPreferenceToolbarFragment {
                 requireContext().getString(R.string.vtfaqsumm),
                 R.drawable.ic_help_outline_28,
                 preference -> {
-                    requireContext().startActivity(new Intent(Intent.ACTION_VIEW).setData(Uri.parse("https://t.me/s/vtosters_faq")));
+                    requireContext().startActivity(new Intent(Intent.ACTION_VIEW).setData(Uri.parse(README_URL)));
                     return false;
                 }
         );
@@ -695,7 +683,7 @@ public class VTSettings extends TrackedMaterialPreferenceToolbarFragment {
                 requireContext().getString(R.string.reportbugsumm),
                 R.drawable.ic_bug_outline_28,
                 preference -> {
-                    requireContext().startActivity(new Intent(Intent.ACTION_VIEW).setData(Uri.parse("https://github.com/vtosters/lite/issues")));
+                    requireContext().startActivity(new Intent(Intent.ACTION_VIEW).setData(Uri.parse(ISSUES_URL)));
                     return false;
                 }
         );
@@ -749,26 +737,5 @@ public class VTSettings extends TrackedMaterialPreferenceToolbarFragment {
     @Override
     public int T4() {
         return R.string.notification_settings;
-    }
-
-    public static class AboutInformation extends DialogFragment {
-        @Override
-        public AlertDialog onCreateDialog(Bundle savedInstanceState) {
-            VkAlertDialog.Builder builder = new VkAlertDialog.Builder(requireActivity());
-
-            String[] items = {AndroidUtils.getString(R.string.app_name_alter), "Telegram"};
-
-            builder.setItems(items, (dialog, which) -> {
-                switch (which) {
-                    case 0 ->
-                            requireContext().startActivity(new Intent(Intent.ACTION_VIEW).setData(Uri.parse(getArguments().getString("vk_link"))));
-                    case 1 ->
-                            requireContext().startActivity(new Intent(Intent.ACTION_VIEW).setData(Uri.parse(getArguments().getString("tg_link"))));
-                }
-                dismiss();
-            });
-
-            return builder.create();
-        }
     }
 }
