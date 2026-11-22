@@ -26,6 +26,9 @@
 - GitHub Actions updated: `actions/checkout@v4`, `actions/setup-java@v4` (Temurin 17) and `actions/upload-artifact@v4`.
 - Windows `generateRjava` now runs the `.bat` script.
 - Windows builds zipalign the APK before signing when `zipalign` is available.
+- `version.properties` is regenerated on every build and is now present in the APK, keeping version and OTA metadata accurate.
+- Removed a hardcoded release AIDL source directory that caused duplicate `ILibVkxService` classes in beta/rc builds.
+- Added `APPCENTER_KEY` to the default config so the debug variant also compiles.
 
 ### Known limitations
 - Old `deleted_msgs` rows that contain only a server message id are still matched by that id until the message is deleted again, because the old schema did not store the dialog/local id.
