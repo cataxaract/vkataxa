@@ -56,15 +56,20 @@ public class GoogleTranslator extends BaseTranslator {
                     .a("User-Agent",
                             "GoogleTranslate/6.28.0.05.421483610 (" + devices[(int) Math.round(Math.random() * (devices.length - 1))] + ")")
                     .a();
-            var payload = client.a(request).execute().a().g();
-            if (!TextUtils.isEmpty(payload)) {
-                var sb = new StringBuilder();
-                var object = new JSONObject(payload);
-                var array = object.getJSONArray("sentences");
-                for (int i = 0; i < array.length(); i++) {
-                    sb.append(array.getJSONObject(i).getString("trans"));
+            try (var response = client.a(request).execute()) {
+                var body = response.a();
+                if (body == null) return text;
+
+                var payload = body.g();
+                if (!TextUtils.isEmpty(payload)) {
+                    var sb = new StringBuilder();
+                    var object = new JSONObject(payload);
+                    var array = object.getJSONArray("sentences");
+                    for (int i = 0; i < array.length(); i++) {
+                        sb.append(array.getJSONObject(i).getString("trans"));
+                    }
+                    return sb.toString();
                 }
-                return sb.toString();
             }
         } catch (Throwable e) {
             e.printStackTrace();

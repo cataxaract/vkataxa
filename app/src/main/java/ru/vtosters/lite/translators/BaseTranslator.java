@@ -44,8 +44,9 @@ public abstract class BaseTranslator {
 
     @NonNull
     public final String getTranslation(String text) {
-        String v = cache.get(text);
-        assert v != null;
-        return v;
+        if (text == null) return "";
+
+        String translated = cache.get(text);
+        return translated != null ? translated : text;
     }
 }

@@ -11,14 +11,17 @@ import static ru.vtosters.hooks.MessagesHook.injectOwnText;
 import static ru.vtosters.hooks.MessagesHook.injectOwnTextAll;
 
 public class EncryptionMessagesHook {
+    private static final String LOCK_PREFIX = "\uD83D\uDD12 ";
     private static final LruCache<String, Boolean> sPlainTextCache = new LruCache<>(256);
+
     // For message editing
     public static String decryptMessage(MsgFromUser msg, boolean showEmoji) {
         if (msg == null) return "";
 
         var decryptedMessage = decryptMessage(EncryptProvider.getBody(msg), EncryptProvider.getPeerId(msg));
-        if (!showEmoji && !decryptedMessage.equals(injectOwnTextAll(EncryptProvider.getBody(msg))))
-            decryptedMessage = decryptedMessage.replaceAll("^\uD83D\uDD12 ", "");
+        if (!showEmoji) {
+            decryptedMessage = stripLockPrefix(decryptedMessage);
+        }
         return decryptedMessage;
     }
 
@@ -26,10 +29,7 @@ public class EncryptionMessagesHook {
         if (msg == null || list == null) return msg;
 
         var peerid = list.G().getId();
-        var decryptedMessage = decryptMessage(msg, peerid);
-        if (!decryptedMessage.equals(injectOwnTextAll(msg)))
-            decryptedMessage = decryptedMessage.replaceAll("^\uD83D\uDD12 ", "");
-        return decryptedMessage;
+        return stripLockPrefix(decryptMessage(msg, peerid));
     }
 
     public static CharSequence decryptMessage(CharSequence msg, int peerid) {
@@ -70,8 +70,9 @@ public class EncryptionMessagesHook {
         if (msgBody == null) return null;
 
         var decryptedMessage = decryptMessage(msgBody, peer);
-        if (!showEmoji && !decryptedMessage.equals(injectOwnTextAll(msgBody)))
-            decryptedMessage = decryptedMessage.replaceAll("^\uD83D\uDD12 ", "");
+        if (!showEmoji) {
+            decryptedMessage = stripLockPrefix(decryptedMessage);
+        }
         return decryptedMessage;
     }
 
@@ -97,13 +98,13 @@ public class EncryptionMessagesHook {
                 if (processor.isPublic()) {
                     if (!processor.isUsed()) continue;
 
-                    return "\uD83D\uDD12 " + processor.getUIName() + ": " + injectOwnTextAll(processor.decode(msgBody, null));
+                    return LOCK_PREFIX + processor.getUIName() + ": " + injectOwnTextAll(processor.decode(msgBody, null));
                 }
 
                 byte[] key = EncryptProvider.getKeyForProcessor(processor, peer);
                 if (key == null) continue;
 
-                return "\uD83D\uDD12 " + processor.getUIName() + ": " + injectOwnTextAll(processor.decode(msgBody, key));
+                return LOCK_PREFIX + processor.getUIName() + ": " + injectOwnTextAll(processor.decode(msgBody, key));
             }
 
             if (!matched) {
@@ -119,14 +120,26 @@ public class EncryptionMessagesHook {
     // This will use only the processor which was chosen in chat menu
     public static String encryptMessage(MsgFromUser msg) {
         String msgBody = EncryptProvider.getBody(msg);
+        if (msgBody == null) return "";
+
         int peer = EncryptProvider.getPeerId(msg);
 
         for (IMProcessor processor : EncryptProvider.processors) {
-            if (processor.isUsedToEncrypt(peer)) {
-                return injectOwnText(processor.encode(msgBody, EncryptProvider.getKeyForProcessor(processor, peer)));
-            }
+            if (!processor.isUsedToEncrypt(peer)) continue;
+
+            byte[] key = EncryptProvider.getKeyForProcessor(processor, peer);
+            if (!processor.isPublic() && key == null) continue;
+
+            return injectOwnText(processor.encode(msgBody, key));
         }
 
         return injectOwnText(msgBody);
+    }
+
+    private static String stripLockPrefix(String text) {
+        if (text != null && text.startsWith(LOCK_PREFIX)) {
+            return text.substring(LOCK_PREFIX.length());
+        }
+        return text;
     }
 }
