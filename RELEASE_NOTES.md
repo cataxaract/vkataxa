@@ -10,9 +10,13 @@
 - Deleted photos are downloaded locally and restored from the app's private storage.
 - Existing saved photos are migrated to the new filename format, so they can also be exported to the gallery.
 - Added null-safety for nested messages, missing senders and empty message bodies.
+- Added a cache for plain-text messages so repeated encryption checks are skipped during message list rendering.
+- Deleted-message transparency is now updated only when the alpha value actually changes.
+- Photo restore avoids duplicate image-list lookups and repeated attachment id reads.
 - Updated the README for this fork: removed direct links to VTosters projects, kept only the note that the project is based on VTosters Lite.
 
 ### Fixed
+- Fixed crashes when opening old chats caused by null message-list bind arguments.
 - Fixed potential crashes when opening old chats containing deleted or forwarded messages from blocked or unavailable users.
 - Fixed photo viewer menu handling that could prevent some standard actions from working.
 - Prevented crashes when parsing messages with missing encryption data or empty text.
