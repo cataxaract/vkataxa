@@ -26,6 +26,7 @@ def dexes = smaliFolder.toFile()
 
 versionFile {
     file = projectDir.toPath().resolve("src/main/assets/version.properties").toFile()
+    outputs.upToDateWhen { false }
 }
 
 task cleanVersionFile {
@@ -36,12 +37,6 @@ android {
     compileSdkVersion 32
     buildToolsVersion '32.0.0'
 
-    sourceSets {
-        main {
-            java.srcDirs += 'build/generated/aidl_source_output_dir/release/out'
-        }
-    }
-
     defaultConfig {
         applicationId "ru.vtosters.lite.utils.lite"
         minSdk 22
@@ -49,6 +44,7 @@ android {
         versionCode 1
         versionName "1.0"
         multiDexEnabled true
+        buildConfigField 'String', 'APPCENTER_KEY', '""'
     }
 
     buildTypes {
