@@ -100,6 +100,14 @@ public class DeletedMessagesHook {
         return getBoolValue("undeletemsg", false);
     }
 
+    private static boolean photosEnabled() {
+        return getBoolValue("undeletemsg_photos", true);
+    }
+
+    private static boolean transparencyEnabled() {
+        return getBoolValue("undeletemsg_transparency", true);
+    }
+
     public static boolean isDeletedMessage(int msgId) {
         return hook() && sDeletedVkIds.contains(msgId);
     }
@@ -126,7 +134,7 @@ public class DeletedMessagesHook {
         if (view == null) return;
 
         try {
-            float alpha = isDeletedMessage(msg) ? 0.55f : 1f;
+            float alpha = isDeletedMessage(msg) && transparencyEnabled() ? 0.55f : 1f;
             if (view.getAlpha() != alpha) {
                 view.setAlpha(alpha);
             }
@@ -225,6 +233,8 @@ public class DeletedMessagesHook {
     }
 
     private static void saveDeletedPhotos(MsgDeleteLpTask msgDeleteLpTask, int messageId) {
+        if (!photosEnabled()) return;
+
         try {
             Msg msg = msgDeleteLpTask.b.a0().j().f(messageId);
             if (msg instanceof MsgFromUser) {
@@ -237,6 +247,8 @@ public class DeletedMessagesHook {
     }
 
     private static void saveDeletedPhotos(int messageId, List<Attach> attaches, List<NestedMsg> nestedMsgs) {
+        if (!photosEnabled()) return;
+
         if (attaches != null) {
             for (Attach attach : attaches) {
                 if (attach instanceof AttachImage) {
@@ -341,6 +353,8 @@ public class DeletedMessagesHook {
     }
 
     private static void restoreDeletedPhotos(int messageId, List<Attach> attaches, List<NestedMsg> nestedMsgs) {
+        if (!photosEnabled()) return;
+
         if (attaches != null) {
             for (Attach attach : attaches) {
                 if (!(attach instanceof AttachImage)) continue;

@@ -5756,6 +5756,10 @@
     <string name="activity_undel_dial">Выберите пометку удалённого сообщения</string>
     <string name="activity_undel_enable">Оставлять удалённые сообщения</string>
     <string name="activity_undel_attachments">Может не сохранять вложения</string>
+    <string name="activity_undel_photos">Восстанавливать фото</string>
+    <string name="activity_undel_photos_summary">Сохранять и восстанавливать изображения из удалённых сообщений</string>
+    <string name="activity_undel_transparency">Выделять удалённые сообщения</string>
+    <string name="activity_undel_transparency_summary">Показывать сохранённые сообщения полупрозрачными</string>
 
     <string name="messages_interface_calls_summary">Иконка звонков в сообщениях</string>
     <string name="messages_interface_tails_summary">Может некорректно работать с вложениями</string>

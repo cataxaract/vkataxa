@@ -5889,6 +5889,10 @@ May look like a fake leaving the online"</string>
     <string name="activity_undel_dial">Choose message tag</string>
     <string name="activity_undel_enable">Keep deleted messages</string>
     <string name="activity_undel_attachments">May not save attachments</string>
+    <string name="activity_undel_photos">Restore deleted photos</string>
+    <string name="activity_undel_photos_summary">Save and restore images from deleted messages</string>
+    <string name="activity_undel_transparency">Highlight deleted messages</string>
+    <string name="activity_undel_transparency_summary">Show kept messages with reduced opacity</string>
 
     <string name="messages_interface_calls_summary">Call icon in messages</string>
     <string name="messages_interface_tails_summary">May not work correctly with attachments</string>

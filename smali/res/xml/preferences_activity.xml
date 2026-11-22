@@ -13,6 +13,16 @@
                 android:key="undeletemsg"
                 android:summary="@string/activity_undel_attachments"
                 android:title="@string/activity_undel_enable"/>
+        <com.vtosters.lite.ui.MaterialSwitchPreference
+                android:defaultValue="true"
+                android:key="undeletemsg_photos"
+                android:summary="@string/activity_undel_photos_summary"
+                android:title="@string/activity_undel_photos"/>
+        <com.vtosters.lite.ui.MaterialSwitchPreference
+                android:defaultValue="true"
+                android:key="undeletemsg_transparency"
+                android:summary="@string/activity_undel_transparency_summary"
+                android:title="@string/activity_undel_transparency"/>
     </PreferenceCategory>
     <PreferenceCategory android:title="@string/online_vtl">
         <com.vtosters.lite.ui.MaterialSwitchPreference
