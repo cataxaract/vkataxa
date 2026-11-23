@@ -2,6 +2,7 @@ package ru.vtosters.lite.ui.fragments;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
@@ -17,6 +18,7 @@ import ru.vtosters.hooks.other.Preferences;
 import ru.vtosters.hooks.other.ThemesUtils;
 import ru.vtosters.lite.downloaders.AudioDownloader;
 import ru.vtosters.lite.music.LastFMScrobbler;
+import ru.vtosters.lite.music.spotify.SpotifyImportActivity;
 import ru.vtosters.lite.music.cache.MusicCacheImpl;
 import ru.vtosters.lite.music.cache.delegate.PlaylistCacheDbDelegate;
 import ru.vtosters.lite.ui.PreferenceFragmentUtils;
@@ -214,6 +216,29 @@ public class MusicFragment extends TrackedMaterialPreferenceToolbarFragment {
                             .setNegativeButton("Отмена", (dialog, which) -> dialog.cancel())
                             .show();
 
+                    return true;
+                }
+        );
+
+        PreferenceFragmentUtils.addPreferenceCategory(getPreferenceScreen(), "Моя волна и Spotify");
+
+        PreferenceFragmentUtils.addListPreference(
+                getPreferenceScreen(),
+                "wave_source",
+                "auto",
+                "Источник рекомендаций",
+                new CharSequence[]{"Авто", "ВКонтакте", "Last.fm"},
+                new CharSequence[]{"auto", "vk", "lastfm"}
+        );
+
+        PreferenceFragmentUtils.addPreference(
+                getPreferenceScreen(),
+                "spotify_import",
+                "Импорт из Spotify",
+                "Перенести плейлисты Spotify в VK Музыку",
+                null,
+                preference -> {
+                    requireContext().startActivity(new Intent(requireContext(), SpotifyImportActivity.class));
                     return true;
                 }
         );

@@ -107,6 +107,15 @@
 .method public a(Lcom/vk/catalog2/core/api/dto/CatalogDataType;Lcom/vk/catalog2/core/api/dto/CatalogViewType;Lcom/vk/catalog2/core/blocks/UIBlock;Lcom/vk/catalog2/core/CatalogEntryPointParams;)Lcom/vk/catalog2/core/holders/common/CatalogViewHolder;
     .locals 3
 
+    invoke-static {p3, p4}, Lru/vtosters/lite/music/wave/WaveTabInjector;->maybeCreateHolder(Lcom/vk/catalog2/core/blocks/UIBlock;Lcom/vk/catalog2/core/CatalogEntryPointParams;)Lcom/vk/catalog2/core/holders/common/CatalogViewHolder;
+
+    move-result-object v0
+
+    if-eqz v0, :cond_vt_wave
+
+    return-object v0
+
+    :cond_vt_wave
     .line 2
     instance-of v0, p3, Lcom/vk/catalog2/core/blocks/UIBlockButtons;
 

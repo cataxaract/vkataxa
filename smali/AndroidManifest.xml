@@ -200,6 +200,19 @@
             android:launchMode="singleTop">
         </activity>
         <activity
+            android:name="ru.vtosters.lite.music.spotify.SpotifyImportActivity"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="spotify-callback"
+                    android:scheme="vkataxa" />
+            </intent-filter>
+        </activity>
+        <activity
             android:name="com.vtosters.lite.MainActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
             android:finishOnTaskLaunch="true"

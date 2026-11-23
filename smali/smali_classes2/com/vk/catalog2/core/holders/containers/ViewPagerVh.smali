@@ -190,6 +190,10 @@
 
     move-result-object v0
 
+    iget-object v1, p0, Lcom/vk/catalog2/core/holders/containers/ViewPagerVh;->d:Lcom/vk/catalog2/core/CatalogConfiguration;
+
+    invoke-static {v0, v1}, Lru/vtosters/lite/music/wave/WaveTabInjector;->inject(Ljava/util/List;Lcom/vk/catalog2/core/CatalogConfiguration;)V
+
     .line 14
     invoke-interface {v0}, Ljava/util/List;->iterator()Ljava/util/Iterator;
 
