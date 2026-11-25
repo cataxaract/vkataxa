@@ -1,3 +1,29 @@
 {
-    "java.configuration.updateBuildConfiguration": "interactive"
+  "java.configuration.updateBuildConfiguration": "interactive",
+  "files.exclude": {
+    "**/smali": true,
+    "**/build-output": true,
+    "**/app/build": true,
+    "**/.gradle": true,
+    "**/*.dex": true,
+    "**/*.idsig": true
+  },
+  "search.exclude": {
+    "**/smali": true,
+    "**/build-output": true,
+    "**/app/build": true,
+    "**/.gradle": true,
+    "**/app/libs": true,
+    "**/native-effects/target": true,
+    "**/com/vtosters/lite/R.java": true
+  },
+  "files.watcherExclude": {
+    "**/smali/**": true,
+    "**/build-output/**": true,
+    "**/app/build/**": true,
+    "**/.gradle/**": true,
+    "**/native-effects/target/**": true
+  },
+  "java.import.exclusions": ["**/smali/**", "**/build/**", "**/build-output/**"],
+  "search.followSymlinks": false
 }
