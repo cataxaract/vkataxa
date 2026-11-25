@@ -309,7 +309,7 @@ public final class SpotifyImportService {
                     progressDb.markAdded(account, "local", item, uid);
                     added++;
                 } catch (Throwable error) {
-                    if (isCaptchaError(error) || isFloodError(error)) {
+                    if (isCaptchaError(error) || isFloodError(error) || isBudgetError(error)) {
                         throw error;
                     }
                     result.failed++;
@@ -612,7 +612,8 @@ public final class SpotifyImportService {
         try {
             String status = isCaptchaError(error)
                     ? "paused_captcha"
-                    : isFloodError(error) ? "paused_flood" : "paused";
+                    : isFloodError(error) ? "paused_flood"
+                    : isBudgetError(error) ? "paused_budget" : "paused";
             new ImportProgressDb(context).setStatus(VkPlaylistApi.currentUserId(), key, status);
         } catch (Throwable ignored) {
         }
@@ -623,6 +624,17 @@ public final class SpotifyImportService {
         while (current != null) {
             if (current instanceof VKApiExecutionException
                     && ((VKApiExecutionException) current).d() == 9) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private static boolean isBudgetError(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof ImportBudgetExceededException) {
                 return true;
             }
             current = current.getCause();

@@ -19,6 +19,7 @@ import com.vk.dto.music.Playlist;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -33,6 +34,9 @@ final class VkPlaylistApi {
     private static final int PAGE = 100;
     private static final int ADD_CHUNK = 10;
     private static final int SEARCH_BATCH = 10;
+    private static final int ADD_BUDGET_PER_HOUR = 60;
+    private static final long ADD_BUDGET_WINDOW_MS = 60 * 60 * 1000L;
+    private static final ArrayDeque<Long> ADD_TIMES = new ArrayDeque<>();
     private static final RateLimiter LIMITER = new RateLimiter(350L);
 
     private VkPlaylistApi() {
@@ -254,6 +258,7 @@ final class VkPlaylistApi {
         for (int start = 0; start < tracks.size(); start += ADD_CHUNK) {
             int end = Math.min(start + ADD_CHUNK, tracks.size());
             List<MusicTrack> chunk = new ArrayList<>(tracks.subList(start, end));
+            reserveAddBudget(chunk.size());
             LIMITER.acquire();
             AudioAddToPlaylist.b builder = new AudioAddToPlaylist.b()
                     .a(ownerId)
@@ -405,6 +410,7 @@ final class VkPlaylistApi {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Throwable> error = new AtomicReference<>();
 
+        reserveAddBudget(1);
         LIMITER.acquire();
         new AudioAdd(track, null)
                 .a(new ApiCallback<Integer>() {
@@ -422,6 +428,24 @@ final class VkPlaylistApi {
                 .a();
 
         await(latch, error);
+    }
+
+    private static void reserveAddBudget(int count) throws ImportBudgetExceededException {
+        if (count <= 0) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        synchronized (ADD_TIMES) {
+            while (!ADD_TIMES.isEmpty() && now - ADD_TIMES.peekFirst() > ADD_BUDGET_WINDOW_MS) {
+                ADD_TIMES.removeFirst();
+            }
+            if (ADD_TIMES.size() + count > ADD_BUDGET_PER_HOUR) {
+                throw new ImportBudgetExceededException(ADD_BUDGET_PER_HOUR);
+            }
+            for (int i = 0; i < count; i++) {
+                ADD_TIMES.addLast(now);
+            }
+        }
     }
 
     private static void await(CountDownLatch latch, AtomicReference<Throwable> error) throws Exception {
