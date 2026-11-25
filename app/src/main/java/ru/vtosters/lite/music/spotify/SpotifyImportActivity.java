@@ -34,6 +34,7 @@ import androidx.core.content.ContextCompat;
 import com.facebook.drawee.generic.GenericDraweeHierarchy;
 import com.facebook.drawee.generic.RoundingParams;
 import com.facebook.drawee.view.SimpleDraweeView;
+import com.vk.core.dialogs.alert.VkAlertDialog;
 
 import java.io.File;
 import java.io.InputStream;
@@ -46,6 +47,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import ru.vtosters.hooks.other.ThemesUtils;
+import ru.vtosters.lite.utils.AccountManagerUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
 
 public class SpotifyImportActivity extends AppCompatActivity {
@@ -60,6 +62,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
     private LinearLayout footer;
     private ProgressBar progress;
     private TextView status;
+    private TextView pausedJobs;
     private boolean running;
     private String pendingCsvKey;
     private String pendingCsvName;
@@ -71,6 +74,12 @@ public class SpotifyImportActivity extends AppCompatActivity {
         getWindow().setNavigationBarColor(ThemesUtils.getBackgroundContent());
         buildUi();
         handleIntent(getIntent());
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        updatePausedJobs();
     }
 
     @Override
@@ -156,6 +165,12 @@ public class SpotifyImportActivity extends AppCompatActivity {
         TextView title = text("Импорт из Spotify", 20, text(), true);
         title.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         toolbar.addView(title);
+
+        pausedJobs = text("Прервано", 13, accent(), true);
+        pausedJobs.setPadding(dp(8), dp(8), dp(8), dp(8));
+        pausedJobs.setVisibility(View.GONE);
+        pausedJobs.setOnClickListener(v -> showPausedJobs());
+        toolbar.addView(pausedJobs);
 
         TextView refresh = text("Обновить", 13, accent(), true);
         refresh.setPadding(dp(10), dp(8), dp(4), dp(8));
@@ -1023,6 +1038,71 @@ public class SpotifyImportActivity extends AppCompatActivity {
 
     private void hideProgress() {
         footer.setVisibility(View.GONE);
+        updatePausedJobs();
+    }
+
+    private void updatePausedJobs() {
+        if (pausedJobs == null) {
+            return;
+        }
+        int count = new ImportProgressDb(this).paused(AccountManagerUtils.getUserId()).size();
+        pausedJobs.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
+        pausedJobs.setText(count > 0 ? "Прервано: " + count : "Прервано");
+    }
+
+    private void showPausedJobs() {
+        List<ImportProgressDb.PausedJob> jobs =
+                new ImportProgressDb(this).paused(AccountManagerUtils.getUserId());
+        if (jobs.isEmpty()) {
+            updatePausedJobs();
+            Toast.makeText(this, "Нет прерванных импортов", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String[] titles = new String[jobs.size()];
+        for (int i = 0; i < jobs.size(); i++) {
+            ImportProgressDb.PausedJob job = jobs.get(i);
+            titles[i] = "Добавлено " + job.added + " из " + job.total
+                    + " · не найдено " + job.miss + "\n" + job.key;
+        }
+        new VkAlertDialog.Builder(this)
+                .setTitle("Прерванные импорты")
+                .setItems(titles, (dialog, which) -> showPausedJobActions(jobs.get(which)))
+                .setNegativeButton("Закрыть", null)
+                .show();
+    }
+
+    private void showPausedJobActions(ImportProgressDb.PausedJob job) {
+        String[] actions = {"Продолжить", "Повторить ненайденные", "Забыть"};
+        new VkAlertDialog.Builder(this)
+                .setTitle(job.key)
+                .setItems(actions, (dialog, which) -> {
+                    if (which == 0) {
+                        resumeJob(job);
+                    } else if (which == 1) {
+                        new ImportProgressDb(this).retryMisses(
+                                AccountManagerUtils.getUserId(), job.key);
+                        Toast.makeText(this, "Ненайденные будут искать снова", Toast.LENGTH_SHORT).show();
+                    } else {
+                        new ImportProgressDb(this).clear(AccountManagerUtils.getUserId(), job.key);
+                        updatePausedJobs();
+                    }
+                })
+                .setNegativeButton("Отмена", null)
+                .show();
+    }
+
+    private void resumeJob(ImportProgressDb.PausedJob job) {
+        if (job.key != null && job.key.startsWith("csv:")) {
+            pickCsv(job.key, job.key.substring("csv:".length()));
+            return;
+        }
+        if ("local".equals(job.key)) {
+            Toast.makeText(this,
+                    "Запустите импорт из папки заново — прогресс сохранён",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        start(new SpotifyPlaylist(job.key, "Spotify", "", "", 0, ""), true);
     }
 
     private int dp(int value) {

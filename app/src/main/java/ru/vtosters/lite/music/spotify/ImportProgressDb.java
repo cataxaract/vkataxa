@@ -11,8 +11,10 @@ import com.vk.dto.music.MusicTrack;
 
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -39,15 +41,32 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         }
     }
 
+    static final class PausedJob {
+        final String key;
+        final String status;
+        final int ownerId;
+        final int playlistId;
+        final int total;
+        final int added;
+        final int matched;
+        final int miss;
+
+        PausedJob(String key, String status, int ownerId, int playlistId,
+                  int total, int added, int matched, int miss) {
+            this.key = key;
+            this.status = status;
+            this.ownerId = ownerId;
+            this.playlistId = playlistId;
+            this.total = total;
+            this.added = added;
+            this.matched = matched;
+            this.miss = miss;
+        }
+    }
+
     ImportProgressDb(Context context) {
         super(context.getApplicationContext(), DB_NAME, null, DB_VERSION);
         setWriteAheadLoggingEnabled(true);
-    }
-
-    @Override
-    public void onConfigure(SQLiteDatabase db) {
-        super.onConfigure(db);
-        db.execSQL("PRAGMA busy_timeout=5000");
     }
 
     @Override
@@ -273,6 +292,58 @@ final class ImportProgressDb extends SQLiteOpenHelper {
             getWritableDatabase().insertWithOnConflict(
                     TABLE_ITEMS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
         }
+    }
+
+    List<PausedJob> paused(int account) {
+        List<PausedJob> result = new ArrayList<>();
+        try (Cursor cursor = getReadableDatabase().query(
+                TABLE_JOBS,
+                new String[]{"key", "status", "target_owner", "target_playlist"},
+                "account = ? AND status LIKE 'paused%'",
+                new String[]{String.valueOf(account)},
+                null, null, "updated_at DESC")) {
+            while (cursor.moveToNext()) {
+                String key = cursor.getString(0);
+                result.add(new PausedJob(
+                        key,
+                        cursor.getString(1),
+                        cursor.getInt(2),
+                        cursor.getInt(3),
+                        count(account, key, null),
+                        count(account, key, "added"),
+                        count(account, key, "matched") + count(account, key, "add_intent"),
+                        count(account, key, "miss")
+                ));
+            }
+        }
+        return result;
+    }
+
+    private int count(int account, String key, String state) {
+        String selection = "account = ? AND key = ?";
+        String[] args;
+        if (state == null) {
+            args = new String[]{String.valueOf(account), key};
+        } else {
+            selection += " AND state = ?";
+            args = new String[]{String.valueOf(account), key, state};
+        }
+        try (Cursor cursor = getReadableDatabase().query(
+                TABLE_ITEMS, new String[]{"COUNT(*)"}, selection, args, null, null, null)) {
+            return cursor.moveToFirst() ? cursor.getInt(0) : 0;
+        }
+    }
+
+    void retryMisses(int account, String key) {
+        ContentValues values = new ContentValues();
+        values.put("state", "pending");
+        values.put("attempts", 0);
+        values.put("last_error", "");
+        values.put("last_attempt", 0L);
+        values.put("updated_at", System.currentTimeMillis());
+        getWritableDatabase().update(
+                TABLE_ITEMS, values, "account = ? AND key = ? AND state = ?",
+                new String[]{String.valueOf(account), key, "miss"});
     }
 
     void clear(int account, String key) {
