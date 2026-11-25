@@ -1,0 +1,20 @@
+* text=auto
+
+# Скрипты сборки должны иметь LF, иначе на Windows ломается shebang и CI-шаги.
+*.sh        text eol=lf
+scripts/*   text eol=lf
+gradlew     text eol=lf
+
+# Windows-скрипты — CRLF
+*.bat       text eol=crlf
+gradlew.bat text eol=crlf
+
+# Бинарники не трогаем и не нормализуем
+*.jar       binary
+*.apk       binary
+*.keystore  binary
+*.so        binary
+*.dex       binary
+*.png       binary
+*.jpg       binary
+*.mp3       binary
