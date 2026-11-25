@@ -13,11 +13,13 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.OpenableColumns;
+import android.text.InputType;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -35,6 +37,7 @@ import com.facebook.drawee.generic.GenericDraweeHierarchy;
 import com.facebook.drawee.generic.RoundingParams;
 import com.facebook.drawee.view.SimpleDraweeView;
 import com.vk.core.dialogs.alert.VkAlertDialog;
+import com.vk.dto.music.Playlist;
 
 import java.io.File;
 import java.io.InputStream;
@@ -678,18 +681,127 @@ public class SpotifyImportActivity extends AppCompatActivity {
     }
 
     private void showLocalImportDialog(List<SpotifyTrack> tracks) {
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("Импорт локальной музыки")
-                .setMessage("Найдено " + tracks.size()
-                        + " аудиофайлов в Music/ и Download/. Добавить найденные треки в «Мою музыку»?")
-                .setPositiveButton("Импортировать", (d, which) -> runLocalImport(tracks, true))
+        new AlertDialog.Builder(this)
+                .setTitle("Найдено " + tracks.size() + " аудиофайлов")
+                .setItems(new String[]{
+                        "В «Мою музыку»",
+                        "В существующий плейлист",
+                        "В новый плейлист"
+                }, (d, which) -> {
+                    if (which == 0) {
+                        runLocalImport(tracks, true, 0, 0);
+                    } else if (which == 1) {
+                        loadLocalPlaylists(tracks);
+                    } else {
+                        showNewLocalPlaylistDialog(tracks);
+                    }
+                })
                 .setNegativeButton("Отмена", (d, which) -> running = false)
-                .create();
-        dialog.setOnCancelListener(d -> running = false);
-        dialog.show();
+                .setOnCancelListener(d -> running = false)
+                .show();
+    }
+
+    private void loadLocalPlaylists(List<SpotifyTrack> tracks) {
+        showProgress("Загружаем плейлисты...");
+        executor.execute(() -> {
+            try {
+                List<Playlist> playlists = VkPlaylistApi.getUserPlaylists();
+                main.post(() -> {
+                    hideProgress();
+                    if (playlists.isEmpty()) {
+                        Toast.makeText(this, "Плейлисты не найдены", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    String[] titles = new String[playlists.size()];
+                    for (int i = 0; i < playlists.size(); i++) {
+                        titles[i] = playlists.get(i).g;
+                    }
+                    new VkAlertDialog.Builder(this)
+                            .setTitle("Куда добавить?")
+                            .setItems(titles, (d, which) -> {
+                                Playlist playlist = playlists.get(which);
+                                int[] ids = parsePlaylistId(playlist.v1());
+                                if (ids == null) {
+                                    Toast.makeText(this, "Некорректный плейлист", Toast.LENGTH_SHORT).show();
+                                    return;
+                                }
+                                runLocalImport(tracks, true, ids[0], ids[1]);
+                            })
+                            .setNegativeButton("Отмена", null)
+                            .show();
+                });
+            } catch (Throwable error) {
+                main.post(() -> {
+                    hideProgress();
+                    Toast.makeText(this, "Ошибка: " + message(error), Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private void showNewLocalPlaylistDialog(List<SpotifyTrack> tracks) {
+        EditText input = new EditText(this);
+        input.setHint("Название плейлиста");
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        new AlertDialog.Builder(this)
+                .setTitle("Новый плейлист")
+                .setView(input)
+                .setPositiveButton("Создать", (d, which) -> {
+                    String name = input.getText().toString().trim();
+                    if (name.isEmpty()) {
+                        name = "Импорт локальной музыки";
+                    }
+                    createLocalPlaylist(tracks, name);
+                })
+                .setNegativeButton("Отмена", (d, which) -> running = false)
+                .show();
+    }
+
+    private void createLocalPlaylist(List<SpotifyTrack> tracks, String name) {
+        showProgress("Создаём плейлист...");
+        executor.execute(() -> {
+            try {
+                int owner = VkPlaylistApi.currentUserId();
+                Playlist playlist = VkPlaylistApi.createPlaylist(
+                        owner, name, "Импортировано локально", new ArrayList<>());
+                main.post(() -> {
+                    hideProgress();
+                    runLocalImport(tracks, true, owner, playlist.a);
+                });
+            } catch (Throwable error) {
+                main.post(() -> {
+                    hideProgress();
+                    Toast.makeText(this, "Не удалось создать плейлист: " + message(error),
+                            Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private static int[] parsePlaylistId(String playlistId) {
+        if (playlistId == null) {
+            return null;
+        }
+        int separator = playlistId.indexOf('_');
+        if (separator <= 0 || separator == playlistId.length() - 1) {
+            return null;
+        }
+        try {
+            return new int[]{
+                    Integer.parseInt(playlistId.substring(0, separator)),
+                    Integer.parseInt(playlistId.substring(separator + 1))
+            };
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private void runLocalImport(List<SpotifyTrack> tracks, boolean onlyNew) {
+        runLocalImport(tracks, onlyNew, 0, 0);
+    }
+
+    private void runLocalImport(List<SpotifyTrack> tracks, boolean onlyNew, int targetOwner, int targetPlaylist) {
         showProgress("Ищем треки в VK...");
 
         SpotifyImportService.Progress progressCallback = (done, total, message) -> main.post(() -> {
@@ -729,6 +841,8 @@ public class SpotifyImportActivity extends AppCompatActivity {
                 this,
                 tracks,
                 onlyNew,
+                targetOwner,
+                targetPlaylist,
                 progressCallback,
                 callback
         ));
@@ -1095,7 +1209,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
             pickCsv(job.key, job.key.substring("csv:".length()));
             return;
         }
-        if ("local".equals(job.key)) {
+        if (job.key != null && job.key.startsWith("local")) {
             Toast.makeText(this,
                     "Запустите импорт из папки заново — прогресс сохранён",
                     Toast.LENGTH_LONG).show();

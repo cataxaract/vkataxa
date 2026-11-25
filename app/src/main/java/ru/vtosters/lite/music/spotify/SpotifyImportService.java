@@ -232,6 +232,68 @@ public final class SpotifyImportService {
             Context context,
             List<SpotifyTrack> localTracks,
             boolean onlyNew,
+            int targetOwner,
+            int targetPlaylist,
+            Progress progress,
+            Callback callback
+    ) {
+        if (targetPlaylist == 0) {
+            importLocalMusic(context, localTracks, onlyNew, progress, callback);
+            return;
+        }
+        importLocalToPlaylist(context, localTracks, targetOwner, targetPlaylist, progress, callback);
+    }
+
+    private static void importLocalToPlaylist(
+            Context context,
+            List<SpotifyTrack> localTracks,
+            int targetOwner,
+            int targetPlaylist,
+            Progress progress,
+            Callback callback
+    ) {
+        CaptchaImageLoader.setAutoCancelPlaceholder(true);
+        try {
+            int account = VkPlaylistApi.currentUserId();
+            if (account == 0) {
+                throw new IllegalStateException("VK is not authorized");
+            }
+            String key = "local:" + targetOwner + "_" + targetPlaylist;
+            ImportProgressDb progressDb = new ImportProgressDb(context);
+            progressDb.saveTarget(account, key, targetOwner, targetPlaylist, "matching");
+            Set<String> targetUids = readTargetUids(targetOwner, targetPlaylist);
+            Set<String> alreadyAdded = progressDb.added(account, key);
+            List<MusicTrack> addedNow = new ArrayList<>();
+            Result result = new Result();
+            result.localImport = true;
+            result.ownerId = targetOwner;
+            result.playlistId = targetPlaylist;
+
+            List<Match> matches = matchTracks(localTracks, progress, result, progressDb,
+                    account, key, batch -> addMatchesImmediately(
+                            targetOwner, targetPlaylist, progressDb, key,
+                            batch, targetUids, alreadyAdded, addedNow));
+            addMatchesImmediately(targetOwner, targetPlaylist, progressDb, key,
+                    matches, targetUids, alreadyAdded, addedNow);
+
+            result.matched = matches.size();
+            result.added = addedNow.size();
+            result.skipped = Math.max(0, matches.size() - addedNow.size());
+            progressDb.clear(account, key);
+            callback.onDone(result);
+        } catch (Throwable error) {
+            logImportError("local-playlist", error);
+            markImportStatus(context, "local:" + targetOwner + "_" + targetPlaylist, error);
+            callback.onError(error);
+        } finally {
+            CaptchaImageLoader.setAutoCancelPlaceholder(false);
+        }
+    }
+
+    public static void importLocalMusic(
+            Context context,
+            List<SpotifyTrack> localTracks,
+            boolean onlyNew,
             Progress progress,
             Callback callback
     ) {

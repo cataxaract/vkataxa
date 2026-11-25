@@ -13,8 +13,10 @@ import com.vk.api.base.ApiCallback;
 import com.vk.api.base.ApiConfig;
 import com.vk.api.sdk.exceptions.VKApiExecutionException;
 import com.vk.api.sdk.o.VKRequest;
+import com.vk.api.audio.AudioGetPlaylists;
 import com.vk.dto.music.MusicTrack;
 import com.vk.dto.music.Playlist;
+import com.vk.dto.music.UserPlaylists;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -44,6 +46,34 @@ final class VkPlaylistApi {
 
     static int currentUserId() {
         return AccountManagerUtils.getUserId();
+    }
+
+    static List<Playlist> getUserPlaylists() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<UserPlaylists> result = new AtomicReference<>();
+        AtomicReference<Throwable> error = new AtomicReference<>();
+
+        LIMITER.acquire();
+        new AudioGetPlaylists.b(currentUserId())
+                .a()
+                .a(new ApiCallback<UserPlaylists>() {
+                    @Override
+                    public void a(UserPlaylists value) {
+                        result.set(value);
+                        latch.countDown();
+                    }
+
+                    @Override
+                    public void a(VKApiExecutionException e) {
+                        error.set(e);
+                        latch.countDown();
+                    }
+                })
+                .a();
+
+        await(latch, error);
+        UserPlaylists value = result.get();
+        return value == null ? new ArrayList<>() : new ArrayList<>(value.b());
     }
 
     static List<MusicTrack> search(String query, int count) throws Exception {
