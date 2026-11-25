@@ -1,3 +1,38 @@
+## v1.1.0
+
+### Added
+- Local music import: scan tracks from the device, match them with VK and add only the missing ones to "My music" (dedup against `audio.get`).
+- Spotify import improvements: batched search (up to 10 queries per `execute`), better title/artist/duration matching, progress with the current track and per-track statistics (added / already present / not found / errors).
+- Captcha placeholder handling while VK asks for confirmation during import.
+
+### Changed
+- The own music playlist is now labelled "Понравившиеся" (ru) / "Liked" (default) instead of "My playlist".
+- Developer builds can toggle feature flags from Settings → For developers (temporary dev-menu item).
+- Release builds are always `zipalign`-ed and verified with `apksigner`; a missing `zipalign` now fails the build instead of being silently skipped.
+
+### Fixed
+- Translation via DeepL could hang forever on any text containing "i" (infinite `Matcher` loop) — fixed.
+- The news feed could crash while filtering a post with unexpected JSON — a failed filter now keeps the post and logs the error.
+- Deleting a message from the local DB could delete same-id messages in other chats; now scoped to `(dialog_id, vk_id)`.
+- Deleted-message markers are deduplicated and scoped per account: no more growth with `localId = null` and no leakage between profiles.
+- DNR/DNT ("do not read"/"do not type") settings are now stored per account; old rows are migrated.
+- Saving a deleted photo or clearing deleted messages no longer depends on a non-null current activity.
+- Music cache migration runs in a single transaction, so an interrupted upgrade no longer loses the cache.
+- Settings edited in text dialogs are now written to the same preferences file the mod reads.
+- Message actions no longer crash on stickers/photos without text.
+- HTTP responses in users/verification lists are closed and lists are re-filled instead of growing.
+
+### Security
+- VK API requests no longer put `access_token` into URLs: the token is sent in the `Authorization: Bearer` header.
+- Spotify OAuth tokens are encrypted with AES/GCM in the Android Keystore (with migration from the old plaintext prefs); the Spotify client id comes from `BuildConfig`.
+- StrictMode no longer permits network on every thread: UI-thread disk/network detectors are enabled in log mode.
+
+### Known limitations
+- VK captcha (error 14) still cannot be solved in this client. Large CSV/Spotify imports may stop with a captcha request; the honest stop + resumable queue is not finished yet, so very large imports should be split manually.
+- "Do not read"/"do not type" rows created before this version are assigned to the account that first opens the database after the update.
+- Photos of deleted messages are still stored in one shared folder keyed by message id and are not separated per account yet.
+- Spotify OAuth import still requires Premium for the owner of the Spotify application; use CSV import otherwise.
+
 ## v1.0.7
 
 ### Added
