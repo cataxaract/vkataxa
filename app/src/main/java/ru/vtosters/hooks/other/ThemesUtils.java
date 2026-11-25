@@ -43,7 +43,9 @@ import static ru.vtosters.lite.utils.AndroidUtils.*;
 public class ThemesUtils {
     public static void applyTheme(VKTheme theme, Boolean restartActivity) {
         try {
-            setTheme(theme, LifecycleUtils.getCurrentActivity(), restartActivity);
+            var activity = LifecycleUtils.getCurrentActivity();
+            if (activity == null) return;
+            setTheme(theme, activity, restartActivity);
         } catch (Exception e) {
             e.fillInStackTrace();
         }
@@ -61,6 +63,7 @@ public class ThemesUtils {
         if (activity == null) {
             activity = LifecycleUtils.getCurrentActivity();
         }
+        if (activity == null) return;
         VKThemeHelper.theme(theme, activity, fl);
         if (isMonetTheme() || ThemesManager.canApplyCustomAccent()) {
             ThemesCore.clear();

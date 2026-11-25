@@ -8,6 +8,7 @@ import com.vk.im.engine.models.EntityIntMap;
 import com.vk.im.engine.models.dialogs.Dialog;
 import com.vk.im.ui.components.common.DialogAction;
 import com.vk.im.ui.views.dialog_actions.DialogActionsListView;
+import ru.vtosters.lite.core.guard.HookGuard;
 import ru.vtosters.lite.dialogs.Requests;
 import ru.vtosters.lite.downloaders.messages.HtmlDialogDownloaderFormatProvider;
 import ru.vtosters.lite.downloaders.messages.MessagesDownloader;
@@ -22,6 +23,7 @@ import java.util.List;
 
 public class DialogHeaderInjector {
     public static boolean onClick(DialogAction action, Dialog dialog) { // header menu
+        return HookGuard.safe("DialogHeader", false, () -> {
         int peerId;
 
         try {
@@ -74,6 +76,7 @@ public class DialogHeaderInjector {
         }
 
         return false;
+        });
     }
 
     public static List<DialogAction> injectToListAccess(List<DialogAction> actions, Dialog dialog) {
@@ -118,6 +121,7 @@ public class DialogHeaderInjector {
 
     @SuppressLint("ResourceType")
     public static List<Object> injectToList(List<Object> actions) {
+        return HookGuard.safe("DialogHeader", actions, () -> {
         var list = new ArrayList<>(actions);
 
 //        list.add(new DialogActionsListView.b.a(DialogAction.STAT, 1, R.attr.im_ic_stats, R.string.dialogstats)); // DialogAction, Int, Icon, String
@@ -141,6 +145,7 @@ public class DialogHeaderInjector {
         list.add(new DialogActionsListView.b.a(DialogAction.MARK_AS_READ, 4, com.vtosters.lite.R.attr.im_ic_done, com.vtosters.lite.R.string.vkim_dialogs_list_option_mark_as_read)); // DialogAction, Int, Icon, String
 
         return list;
+        });
     }
 
     public static void forceInvalidateDialogActions(Dialog d) {

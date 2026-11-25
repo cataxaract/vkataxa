@@ -67,7 +67,10 @@ public class VKAccountDB {
 
     public static void saveData() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            LifecycleUtils.getCurrentActivity().requestPermissions(new String[]{"android.permission.WRITE_EXTERNAL_STORAGE"}, 228);
+            var activity = LifecycleUtils.getCurrentActivity();
+            if (activity != null) {
+                activity.requestPermissions(new String[]{"android.permission.WRITE_EXTERNAL_STORAGE"}, 228);
+            }
         }
 
         SQLiteDatabase db = getDatabase().getReadableDatabase();

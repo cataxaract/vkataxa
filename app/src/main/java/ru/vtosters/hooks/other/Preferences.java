@@ -5,6 +5,8 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.StrictMode;
 
 import com.vk.core.util.AppContextHolder;
@@ -23,11 +25,11 @@ import java.security.NoSuchAlgorithmException;
 
 public class Preferences {
     private static SharedPreferences sPreferences;
+    private static volatile StrictMode.ThreadPolicy sStrictModePolicy;
 
     public static void init(Application application) throws Exception {
         AppContextHolder.a = application.getApplicationContext();
-        StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitNetwork().build();
-        StrictMode.setThreadPolicy(policy); // fix profiles hide hook
+        applyStrictModePolicy();
 
         MediaNative.init(application);
 
@@ -38,6 +40,27 @@ public class Preferences {
 
         AnalyticsHelper.start(application);
     } // VK Init
+
+    // SEC-02: no more silent permitNetwork; detect UI-thread disk/network and log violations.
+    public static void applyStrictModePolicy() {
+        StrictMode.ThreadPolicy policy = sStrictModePolicy;
+        if (policy == null) {
+            policy = new StrictMode.ThreadPolicy.Builder()
+                    .detectNetwork()
+                    .detectDiskReads()
+                    .detectDiskWrites()
+                    .penaltyLog()
+                    .build();
+            sStrictModePolicy = policy;
+        }
+        StrictMode.setThreadPolicy(policy);
+        // ThreadPolicy is thread-local: re-apply on the main thread as well, after the
+        // application/activity setup, so VK's own policy cannot mask UI-thread violations.
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            StrictMode.ThreadPolicy mainPolicy = policy;
+            new Handler(Looper.getMainLooper()).post(() -> StrictMode.setThreadPolicy(mainPolicy));
+        }
+    }
 
     public static String getBuildName() {
         return AndroidUtils.upString(BuildConfig.BUILD_TYPE);

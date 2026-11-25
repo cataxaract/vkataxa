@@ -56,6 +56,7 @@ public class CryptImHook {
 
         IMProcessor finalEnabled = enabled;
         Activity ctx = getCurrentActivity();
+        if (ctx == null) return;
 
         new VkAlertDialog.Builder(ctx)
                 .setTitle(AndroidUtils.getString(R.string.encryption_sett))
@@ -103,6 +104,7 @@ public class CryptImHook {
         }
 
         Context ctx = getCurrentActivity();
+        if (ctx == null) return;
 
         LinearLayout linearLayout = new LinearLayout(ctx);
 

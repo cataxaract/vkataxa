@@ -42,9 +42,9 @@ public class ProfileButtons {
 
             if (!orig.has("type") && AccountManagerUtils.isVKTester()) {
                 var map = new HashMap<>();
-                map.put("20", "https://raw.githubusercontent.com/vtosters/lite/main/.github/images/bug_icon/20.png");
-                map.put("40", "https://raw.githubusercontent.com/vtosters/lite/main/.github/images/bug_icon/40.png");
-                map.put("80", "https://raw.githubusercontent.com/vtosters/lite/main/.github/images/bug_icon/80.png");
+                map.put("20", "https://raw.githubusercontent.com/cataxaract/vkataxa/main/.github/images/bug_icon/20.png");
+                map.put("40", "https://raw.githubusercontent.com/cataxaract/vkataxa/main/.github/images/bug_icon/40.png");
+                map.put("80", "https://raw.githubusercontent.com/cataxaract/vkataxa/main/.github/images/bug_icon/80.png");
 
                 newItem.put(generateJsonObject(
                         AndroidUtils.getString(com.vtosters.lite.R.string.tester_profile),

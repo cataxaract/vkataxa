@@ -16,6 +16,7 @@ import androidx.preference.Preference;
 import com.aefyr.tsg.g2.TelegramStickersService;
 import com.vk.about.AboutAppFragment;
 import com.vk.balance.BalanceFragment;
+import com.vk.core.dialogs.alert.VkAlertDialog;
 import com.vk.identity.fragments.IdentityListFragment;
 import com.vk.medianative.MediaImageEncoder;
 import com.vk.notifications.settings.NotificationsSettingsFragment;
@@ -38,6 +39,7 @@ import ru.vtosters.hooks.other.ThemesUtils;
 import ru.vtosters.hooks.ui.SystemThemeChangerHook;
 import ru.vtosters.lite.BuildConfig;
 import ru.vtosters.lite.concurrent.VTExecutors;
+import ru.vtosters.lite.core.flags.FeatureFlags;
 import ru.vtosters.lite.deviceinfo.OEMDetector;
 import ru.vtosters.lite.proxy.ProxyUtils;
 import ru.vtosters.lite.ssfs.Utils;
@@ -94,6 +96,23 @@ public class VTSettings extends TrackedMaterialPreferenceToolbarFragment {
 
     private void switchTheme(boolean isDarkTheme) {
         ThemesUtils.setTheme(isDarkTheme ? ThemesUtils.getDarkTheme() : ThemesUtils.getLightTheme(), requireActivity(), true);
+    }
+
+    // TEMP-UI(F-02): диалог переключения флагов фич. Удалить после редизайна.
+    private void showFeatureFlagsDialog() {
+        FeatureFlags.Flag[] flags = FeatureFlags.Flag.values();
+        String[] items = new String[flags.length];
+        for (int i = 0; i < flags.length; i++) {
+            items[i] = (FeatureFlags.isEnabled(flags[i]) ? "[x] " : "[ ] ") + flags[i].description;
+        }
+        new VkAlertDialog.Builder(requireContext())
+                .setTitle("Флаги фич")
+                .setItems(items, (dialog, which) -> {
+                    FeatureFlags.set(flags[which], !FeatureFlags.isEnabled(flags[which]));
+                    showFeatureFlagsDialog();
+                })
+                .setNegativeButton("Закрыть", null)
+                .show();
     }
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
@@ -299,6 +318,19 @@ public class VTSettings extends TrackedMaterialPreferenceToolbarFragment {
                     (preference, o) -> {
                         Preferences.getPreferences().edit().putBoolean("ssl", (boolean) o).commit();
                         return true;
+                    }
+            );
+
+            // TEMP-UI(F-02): пункт «Флаги фич» в группе «Для разработчиков». Удалить после редизайна.
+            PreferenceFragmentUtils.addPreference(
+                    getPreferenceScreen(),
+                    "feature_flags",
+                    "Флаги фич",
+                    FeatureFlags.enabledCount() + " из " + FeatureFlags.Flag.values().length + " включено",
+                    RecolorUtils.recolorDrawable(R.drawable.ic_bug_outline_28, ThemesUtils.getColor(R.color.red)),
+                    preference -> {
+                        showFeatureFlagsDialog();
+                        return false;
                     }
             );
         }

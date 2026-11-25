@@ -1,7 +1,6 @@
 package ru.vtosters.lite.ui;
 
 import android.graphics.drawable.Drawable;
-import android.preference.PreferenceManager;
 import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -13,6 +12,7 @@ import androidx.preference.PreferenceCategory;
 import androidx.preference.PreferenceScreen;
 import com.vk.core.dialogs.alert.VkAlertDialog;
 import com.vtosters.lite.ui.MaterialSwitchPreference;
+import ru.vtosters.hooks.other.Preferences;
 import ru.vtosters.hooks.other.ThemesUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
 import ru.vtosters.lite.utils.ImageUtils;
@@ -302,7 +302,7 @@ public class PreferenceFragmentUtils {
             LinearLayout linearLayout = new LinearLayout(screen.getContext());
 
             EditText editText = new EditText(screen.getContext());
-            editText.setText(PreferenceManager.getDefaultSharedPreferences(screen.getContext()).getString(key, ""));
+            editText.setText(Preferences.getPreferences().getString(key, ""));
             editText.setHint(title);
             editText.setTextColor(ThemesUtils.getTextAttr());
             editText.setHintTextColor(ThemesUtils.getSTextAttr());
@@ -323,7 +323,7 @@ public class PreferenceFragmentUtils {
                         if (!change)
                             return;
 
-                        PreferenceManager.getDefaultSharedPreferences(screen.getContext())
+                        Preferences.getPreferences()
                                 .edit()
                                 .putString(key, editText.getText().toString())
                                 .apply();

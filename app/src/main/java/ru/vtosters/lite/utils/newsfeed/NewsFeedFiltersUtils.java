@@ -5,6 +5,8 @@ import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import ru.vtosters.lite.core.guard.HookGuard;
+import ru.vtosters.lite.core.log.VtLog;
 import ru.vtosters.lite.utils.AccountManagerUtils;
 import ru.vtosters.sponsorpost.internal.VotesPreferences;
 import ru.vtosters.sponsorpost.utils.FiltersPreferences;
@@ -72,8 +74,8 @@ public class NewsFeedFiltersUtils {
             if (!list.isEmpty()) {
                 JSONObject copyRight = json.optJSONObject("copyright");
                 if (copyRight != null) {
-                    String name = copyRight.getString("name").toLowerCase();
-                    String link = copyRight.getString("link").toLowerCase();
+                    String name = copyRight.optString("name").toLowerCase();
+                    String link = copyRight.optString("link").toLowerCase();
                     return list.stream().anyMatch(filter -> name.contains(filter.toLowerCase()) || link.contains(filter.toLowerCase()));
                 }
             }
@@ -278,21 +280,25 @@ public class NewsFeedFiltersUtils {
     }
 
     public static JSONArray feedInject(JSONArray items, boolean needToShowToast) {
+        return HookGuard.safe("Feed", items, () -> {
         if (items.length() == 0) return items;
 
         Stream<JSONObject> stream = IntStream.range(0, items.length())
                 .mapToObj(items::optJSONObject);
 
         List<JSONObject> list = stream.filter(post -> {
+                    if (post == null) return false;
                     try {
-                        return post != null && needToSave(post, "feed", needToShowToast);
+                        return needToSave(post, "feed", needToShowToast);
                     } catch (JSONException e) {
-                        throw new RuntimeException(e);
+                        VtLog.e("Feed", "filter failed, post kept", e);
+                        return true;
                     }
                 })
                 .collect(Collectors.toList());
 
         return new JSONArray(list);
+        });
     }
 
     private static void logRemovedPost(JSONObject json, String source, String reason, boolean needToShowToast) {

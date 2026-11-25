@@ -27,6 +27,7 @@ import static ru.vtosters.lite.utils.CacheUtils.getInstance;
 
 public class MainActivityInjector {
     public static void inject(Activity activity) {
+        Preferences.applyStrictModePolicy(); // SEC-02: re-assert after VK init
         SystemThemeChangerHook.themeOnStart(activity);
 
         UsersList.getUsersList();

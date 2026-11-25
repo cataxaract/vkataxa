@@ -31,6 +31,7 @@ public class SystemThemeChangerHook {
 
     public static void themeOnStart(Activity activity) {
         if (activity == null) activity = LifecycleUtils.getCurrentActivity();
+        if (activity == null) return;
 
         onThemeChanged(activity.getResources().getConfiguration(), false);
     }

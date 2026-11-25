@@ -44,8 +44,8 @@ public class UsersList {
 
             @Override
             public void a(Call call, Response response) {
-                try {
-                    parseJson(new JSONObject(GzipDecompressor.decompressResponse(response)).getJSONObject("response"));
+                try (Response resp = response) {
+                    parseJson(new JSONObject(GzipDecompressor.decompressResponse(resp)).getJSONObject("response"));
                 } catch (JSONException | IOException e) {
                     e.printStackTrace();
                 }
@@ -68,6 +68,8 @@ public class UsersList {
         Log.d(TAG, idsDescription.toString());
         Log.d(TAG, idsBanner.toString());
 
+        bannersList.clear();
+        descriptionsList.clear();
         processIds(idsBanner, bannersList);
         processIds(idsDescription, descriptionsList);
     }

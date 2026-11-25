@@ -46,7 +46,10 @@ public class PalettesManager {
 
         if (Build.VERSION.SDK_INT >= 23 && !Environment.getExternalStorageDirectory().canWrite()) {
             makeText(getGlobalContext(), AndroidUtils.getString("cannot_write"), Toast.LENGTH_LONG).show();
-            LifecycleUtils.getCurrentActivity().requestPermissions(new String[]{"android.permission.WRITE_EXTERNAL_STORAGE"}, 228);
+            var activity = LifecycleUtils.getCurrentActivity();
+            if (activity != null) {
+                activity.requestPermissions(new String[]{"android.permission.WRITE_EXTERNAL_STORAGE"}, 228);
+            }
             return;
         }
 

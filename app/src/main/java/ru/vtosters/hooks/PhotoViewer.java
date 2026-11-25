@@ -27,6 +27,7 @@ import com.vtosters.lite.attachments.PhotoAttachment;
 import okhttp3.*;
 import okio.Okio;
 import ru.vtosters.lite.concurrent.VTExecutors;
+import ru.vtosters.lite.core.guard.HookGuard;
 import ru.vtosters.lite.di.singleton.VtOkHttpClient;
 import ru.vtosters.lite.themes.utils.RecolorUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
@@ -45,6 +46,7 @@ public class PhotoViewer {
     //region INSERTION INTO SMALI
     @SuppressLint("UseCompatLoadingForDrawables")
     public static void addMenuItems(AttachmentWithMedia attachment, ActionsPopup.b actionPopup, int i, boolean z) {
+        HookGuard.safe("PhotoViewer", () -> {
         actionPopup.a(
                 R.string.copy,
                 RecolorUtils.fixActionMenuIcons(R.drawable.ic_copy_outline_28),
@@ -97,10 +99,12 @@ public class PhotoViewer {
                     }
             );
         }
+        });
     }
 
     @SuppressLint("NonConstantResourceId")
     public static boolean interceptClick(AttachmentWithMedia attachment, MenuItem item, View view) {
+        return HookGuard.safe("PhotoViewer", false, () -> {
         switch (item.getItemId()) {
             case R.id.copy_image -> {
                 copyImage(attachment);
@@ -127,6 +131,7 @@ public class PhotoViewer {
         }
 
         return false;
+        });
     }
     //endregion
 
@@ -181,10 +186,12 @@ public class PhotoViewer {
         if (TextUtils.isEmpty(url)) return;
         int selectedEngine = SearchEngine.getDefaultSearchEngine();
         if (selectedEngine < 0) {
+            var currentActivity = LifecycleUtils.getCurrentActivity();
+            if (currentActivity == null) return;
             var items = new String[SearchEngine.values().length];
             for (int i = 0; i < SearchEngine.values().length; ++i)
                 items[i] = SearchEngine.values()[i].mTitle;
-            new VkAlertDialog.Builder(LifecycleUtils.getCurrentActivity())
+            new VkAlertDialog.Builder(currentActivity)
                     .setItems(items, (di, i) -> openUrl(SearchEngine.values()[i].buildSearchUrl(url)))
                     .show();
         } else {

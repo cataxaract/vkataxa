@@ -40,6 +40,7 @@ import okhttp3.Response;
 import okio.BufferedSink;
 import okio.Okio;
 import ru.vtosters.lite.concurrent.VTExecutors;
+import ru.vtosters.lite.utils.AccountManagerUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
 
 import java.io.File;
@@ -787,15 +788,19 @@ public class DeletedMessagesHook {
         return null;
     }
 
-    public static void deleteMessageFromDB(int messageId) {
+    public static void deleteMessageFromDB(int peerId, int messageId) {
         SQLiteDatabase db = sVKSQLiteDatabase;
-        if (db != null) {
-            db.execSQL("DELETE FROM messages WHERE vk_id = " + messageId);
+        if (db == null) return;
+
+        try {
+            db.execSQL("DELETE FROM messages WHERE dialog_id = ? AND vk_id = ?", new Object[]{peerId, messageId});
+        } catch (Throwable th) {
+            Log.w("DeletedMessagesHook", "Failed to delete message from DB", th);
         }
     }
 
     public static class DeletedMessagesDBHelper extends SQLiteOpenHelper {
-        private static final int DB_VERSION = 2;
+        private static final int DB_VERSION = 4;
 
         public DeletedMessagesDBHelper() {
             super(getGlobalContext(), "deleted_msgs", null, DB_VERSION);
@@ -803,24 +808,44 @@ public class DeletedMessagesHook {
 
         @Override
         public void onCreate(SQLiteDatabase db) {
-            db.execSQL("create table deleted_msgs (id integer primary key, msgId integer, peerId integer, localId integer)");
+            db.execSQL("create table deleted_msgs (id integer primary key, msgId integer, peerId integer, localId integer, account integer)");
             createIndexes(db);
         }
 
         @Override
         public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-            if (oldVersion >= 2) return;
+            if (oldVersion < 2) {
+                addColumn(db, "peerId");
+                addColumn(db, "localId");
+            }
 
-            addColumn(db, "peerId");
-            addColumn(db, "localId");
+            if (oldVersion < 3) {
+                dedupeByPeerAndMessage(db);
+            }
 
-            try {
-                db.execSQL("DELETE FROM deleted_msgs WHERE id NOT IN (SELECT MIN(id) FROM deleted_msgs GROUP BY msgId)");
-            } catch (Throwable th) {
-                Log.w("DeletedMessagesHook", "Failed to deduplicate deleted messages", th);
+            if (oldVersion < 4) {
+                addColumn(db, "account");
+                db.execSQL("UPDATE deleted_msgs SET account = ? WHERE account IS NULL", new Object[]{account()});
+                dedupeByPeerAndMessage(db);
             }
 
             createIndexes(db);
+        }
+
+        private static int account() {
+            return AccountManagerUtils.getUserId();
+        }
+
+        private static void dedupeByPeerAndMessage(SQLiteDatabase db) {
+            db.beginTransaction();
+            try {
+                db.execSQL("DELETE FROM deleted_msgs WHERE id NOT IN (SELECT MIN(id) FROM deleted_msgs GROUP BY peerId, msgId)");
+                db.setTransactionSuccessful();
+            } catch (Throwable th) {
+                Log.w("DeletedMessagesHook", "Failed to deduplicate deleted messages", th);
+            } finally {
+                db.endTransaction();
+            }
         }
 
         private static void addColumn(SQLiteDatabase db, String column) {
@@ -846,7 +871,10 @@ public class DeletedMessagesHook {
         }
 
         private static void createIndexes(SQLiteDatabase db) {
+            db.execSQL("drop index if exists idx_deleted_msgs_peer_msg");
             db.execSQL("create unique index if not exists idx_deleted_msgs_local on deleted_msgs(localId) where localId is not null");
+            db.execSQL("create unique index if not exists idx_deleted_msgs_acc_peer_msg on deleted_msgs(account, peerId, msgId)");
+            db.execSQL("create index if not exists idx_deleted_msgs_acc_peer on deleted_msgs(account, peerId)");
             db.execSQL("create index if not exists idx_deleted_msgs_msg on deleted_msgs(msgId)");
         }
 
@@ -854,6 +882,7 @@ public class DeletedMessagesHook {
             SQLiteDatabase db = getWritableDatabase();
 
             ContentValues values = new ContentValues();
+            values.put("account", account());
             values.put("msgId", msgId);
             values.put("peerId", peerId);
             if (localId != null) {
@@ -869,8 +898,8 @@ public class DeletedMessagesHook {
             try (Cursor cursor = db.query(
                     "deleted_msgs",
                     new String[]{"localId", "msgId"},
-                    "peerId = ?",
-                    new String[]{String.valueOf(peerId)},
+                    "peerId = ? AND account = ?",
+                    new String[]{String.valueOf(peerId), String.valueOf(account())},
                     null, null, null)) {
                 int localIndex = cursor.getColumnIndex("localId");
                 int msgIndex = cursor.getColumnIndex("msgId");
@@ -888,15 +917,16 @@ public class DeletedMessagesHook {
 
         public int deleteForPeer(int peerId, Set<Integer> localIds, Set<Integer> vkIds) {
             SQLiteDatabase db = getWritableDatabase();
-            int removed = db.delete("deleted_msgs", "peerId = ?", new String[]{String.valueOf(peerId)});
+            String currentAccount = String.valueOf(account());
+            int removed = db.delete("deleted_msgs", "peerId = ? AND account = ?", new String[]{String.valueOf(peerId), currentAccount});
 
-            removed += deleteInChunks(db, "localId IN (%s)", localIds);
-            removed += deleteInChunks(db, "localId IS NULL AND msgId IN (%s)", vkIds);
+            removed += deleteInChunks(db, "localId IN (%s) AND account = ?", localIds, currentAccount);
+            removed += deleteInChunks(db, "localId IS NULL AND msgId IN (%s) AND account = ?", vkIds, currentAccount);
 
             return removed;
         }
 
-        private static int deleteInChunks(SQLiteDatabase db, String whereTemplate, Set<Integer> ids) {
+        private static int deleteInChunks(SQLiteDatabase db, String whereTemplate, Set<Integer> ids, String... extraArgs) {
             if (ids.isEmpty()) return 0;
 
             Object[] values = ids.toArray();
@@ -906,13 +936,15 @@ public class DeletedMessagesHook {
             for (int start = 0; start < values.length; start += chunkSize) {
                 int end = Math.min(start + chunkSize, values.length);
                 StringBuilder placeholders = new StringBuilder();
-                String[] args = new String[end - start];
+                String[] args = new String[end - start + extraArgs.length];
 
                 for (int i = start; i < end; i++) {
                     if (i > start) placeholders.append(',');
                     placeholders.append('?');
                     args[i - start] = String.valueOf(values[i]);
                 }
+
+                System.arraycopy(extraArgs, 0, args, end - start, extraArgs.length);
 
                 removed += db.delete("deleted_msgs", whereTemplate.replace("%s", placeholders.toString()), args);
             }
@@ -924,7 +956,7 @@ public class DeletedMessagesHook {
             SQLiteDatabase db = getReadableDatabase();
             Set<Integer> localVkIds = ConcurrentHashMap.newKeySet();
 
-            try (Cursor cursor = db.query("deleted_msgs", new String[]{"localId", "msgId"}, null, null, null, null, null)) {
+            try (Cursor cursor = db.query("deleted_msgs", new String[]{"localId", "msgId"}, "account = ?", new String[]{String.valueOf(account())}, null, null, null)) {
                 int localIndex = cursor.getColumnIndex("localId");
                 int msgIndex = cursor.getColumnIndex("msgId");
 

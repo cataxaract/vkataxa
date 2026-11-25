@@ -69,7 +69,8 @@ public class DeepLTranslator extends BaseTranslator {
                 tl = tl.toUpperCase();
 
             var i = 1;
-            while (pattern.matcher(text).find()) {
+            var matcher = pattern.matcher(text);
+            while (matcher.find()) {
                 i++;
             }
 

@@ -15,6 +15,7 @@ public class BannerHook {
     public static boolean showAlert() {
         var context = LifecycleUtils.getCurrentActivity();
         var bool = Preferences.getBoolValue("linkalert", false);
+        if (context == null) return true;
 
         if (!bool) {
             new VkAlertDialog.Builder(context)

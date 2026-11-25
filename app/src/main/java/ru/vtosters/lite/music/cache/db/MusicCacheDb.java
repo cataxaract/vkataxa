@@ -113,24 +113,31 @@ public class MusicCacheDb extends SQLiteOpenHelper implements AutoCloseable { //
         if (oldVersion < newVersion) {
             List<MusicTrack> tracks = getTracksWithCursor(db.query(Constants.TABLE_NAME, null, null, null, null, null, null));
 
-            db.execSQL(Constants.DROP_QUERY);
+            db.beginTransaction();
+            try {
+                db.execSQL(Constants.DROP_QUERY);
 
-            onCreate(db);
+                onCreate(db);
 
-            for (MusicTrack track : tracks) {
-                ContentValues vals = new ContentValues();
-                vals.put(Constants.COLUMN_TRACK_ID, track.y1());
-                vals.put(Constants.COLUMN_ALBUM_ID, track.I != null ? track.I.getId() + "" : "-1");
-                vals.put(Constants.COLUMN_TITLE, track.f);
-                vals.put(Constants.COLUMN_SUBTITLE, track.g);
-                vals.put(Constants.COLUMN_ARTIST, MusicTrackUtils.getArtists(track));
-                vals.put(Constants.COLUMN_ALBUM_TITLE, track.I != null ? track.I.getTitle() : "");
-                vals.put(Constants.COLUMN_EXPLICIT, Boolean.compare(track.K, true));
-                vals.put(Constants.COLUMN_DURATION, track.h);
-                vals.put(Constants.COLUMN_HAS_ARTWORK, track.I != null && track.I.u1() != null);
-                db.insert(Constants.TABLE_NAME, null, vals);
+                for (MusicTrack track : tracks) {
+                    ContentValues vals = new ContentValues();
+                    vals.put(Constants.COLUMN_TRACK_ID, track.y1());
+                    vals.put(Constants.COLUMN_ALBUM_ID, track.I != null ? track.I.getId() + "" : "-1");
+                    vals.put(Constants.COLUMN_TITLE, track.f);
+                    vals.put(Constants.COLUMN_SUBTITLE, track.g);
+                    vals.put(Constants.COLUMN_ARTIST, MusicTrackUtils.getArtists(track));
+                    vals.put(Constants.COLUMN_ALBUM_TITLE, track.I != null ? track.I.getTitle() : "");
+                    vals.put(Constants.COLUMN_EXPLICIT, Boolean.compare(track.K, true));
+                    vals.put(Constants.COLUMN_DURATION, track.h);
+                    vals.put(Constants.COLUMN_HAS_ARTWORK, track.I != null && track.I.u1() != null);
+                    db.insert(Constants.TABLE_NAME, null, vals);
 
-                PlaylistCacheDbDelegate.addTrackToPlaylist(AndroidUtils.getGlobalContext(), AccountManagerUtils.getUserId() + "_-1", track.y1());
+                    PlaylistCacheDbDelegate.addTrackToPlaylist(AndroidUtils.getGlobalContext(), AccountManagerUtils.getUserId() + "_-1", track.y1());
+                }
+
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
             }
         }
     }

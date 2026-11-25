@@ -2,6 +2,7 @@ package ru.vtosters.hooks;
 
 import com.vk.im.engine.commands.messages.SetUserActivityCmd;
 import com.vk.im.engine.models.dialogs.Dialog;
+import ru.vtosters.lite.core.guard.HookGuard;
 import ru.vtosters.lite.dialogs.helpers.DoNotReadDBHelper;
 import ru.vtosters.lite.dialogs.helpers.DoNotTypeDBHelper;
 
@@ -32,8 +33,10 @@ public class MessagesActivityHook {
     }
 
     public static boolean isDnrEnabledFor(Dialog dialog) {
+        return HookGuard.safe("MsgActivity", false, () -> {
         if (dialog == null) return false;
         return isDnrEnabledFor(dialog.getId());
+        });
     }
 
     public static boolean isDntEnabledFor(Dialog dialog) {

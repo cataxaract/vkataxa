@@ -131,7 +131,8 @@ public class MessagesHook {
 
     public static Context fixCTX(Context ctx) {
         if (ctx == null) {
-            return LifecycleUtils.getCurrentActivity();
+            android.app.Activity activity = LifecycleUtils.getCurrentActivity();
+            return activity != null ? activity : ru.vtosters.lite.utils.AndroidUtils.getGlobalContext();
         } else {
             return ctx;
         }

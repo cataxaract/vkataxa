@@ -89,7 +89,8 @@ public class FoafBase {
                 .a();
 
         try (Response response = Network.b(CLIENT_API).a(request).execute()) {
-            LifecycleUtils.getCurrentActivity().runOnUiThread(() -> {
+            android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+            handler.post(() -> {
                 try {
                     showFoafInfo(progressDialog, context, i, GzipDecompressor.decompressResponse(response));
                 } catch (IOException e) {

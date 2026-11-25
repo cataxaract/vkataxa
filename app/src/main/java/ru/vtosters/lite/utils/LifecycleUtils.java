@@ -25,6 +25,7 @@ public class LifecycleUtils {
             @Override // android.app.Application.ActivityLifecycleCallbacks
             public void onActivityResumed(Activity activity) {
                 activities.add(activity);
+                ru.vtosters.hooks.other.Preferences.applyStrictModePolicy(); // SEC-02: late main-thread policy
             }
 
             @Override // android.app.Application.ActivityLifecycleCallbacks
@@ -52,7 +53,7 @@ public class LifecycleUtils {
     }
 
     public static Activity getCurrentActivity() {
-        return !activities.isEmpty() ? activities.get(activities.size() - 1) : new MainActivity();
+        return !activities.isEmpty() ? activities.get(activities.size() - 1) : null;
     }
 
     public static void restartApplication() {

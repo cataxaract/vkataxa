@@ -50,8 +50,8 @@ public class VTVerifications {
         sClient.a(request).a(new Callback() {
             @Override
             public void a(Call call, Response response) {
-                try {
-                    String payload = GzipDecompressor.decompressResponse(response);
+                try (Response resp = response) {
+                    String payload = GzipDecompressor.decompressResponse(resp);
                     parseJson(payload);
                     prefs.edit()
                             .putString("ids", payload)
@@ -87,6 +87,9 @@ public class VTVerifications {
     private static void parseJson(String payload) {
         try {
             JSONObject json = new JSONObject(payload);
+            sVerifications.clear();
+            sPrometheuses.clear();
+            sDevelopers.clear();
             processIds(json.optJSONArray("0"), sVerifications);
             processIds(json.optJSONArray("228"), sPrometheuses);
             processIds(json.optJSONArray("404"), sDevelopers);

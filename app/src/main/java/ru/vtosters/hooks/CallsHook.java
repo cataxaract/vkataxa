@@ -8,6 +8,7 @@ import android.view.View;
 import android.widget.Toast;
 import com.vk.im.engine.models.dialogs.Dialog;
 import com.vtosters.lite.api.ExtendedUserProfile;
+import ru.vtosters.lite.core.guard.HookGuard;
 import ru.vtosters.lite.utils.AccountManagerUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
 import ru.vtosters.lite.utils.LifecycleUtils;
@@ -29,13 +30,14 @@ public class CallsHook {
     }
 
     public static void call(Context ctx, int id) {
+        HookGuard.safe("Calls", () -> {
         // FIXME: add com.vk.calls, right now it doesn't support intent
         var vkim = checkPackage("com.vk.im");
         var vk = checkPackage("com.vkontakte.android");
         var callsAvailable = vkim || vk;
 
         if (!callsAvailable) {
-            Toast.makeText(LifecycleUtils.getCurrentActivity(), AndroidUtils.getString("calls_not_available"), LENGTH_SHORT).show();
+            AndroidUtils.sendToast(AndroidUtils.getString("calls_not_available"));
 
             try {
                 var action = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.vkontakte.android"));
@@ -54,6 +56,7 @@ public class CallsHook {
         var startCall = new Intent(Intent.ACTION_VIEW, Uri.parse(link)).setPackage(vk ? "com.vkontakte.android" : "com.vk.im");
         startCall.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         ctx.startActivity(startCall);
+        });
     }
 
     private static Boolean checkPackage(String packageName) {

@@ -4,6 +4,7 @@ import android.os.Environment;
 import com.vk.im.engine.models.dialogs.Dialog;
 import com.vk.im.ui.components.common.DialogAction;
 import com.vtosters.lite.R;
+import ru.vtosters.lite.core.guard.HookGuard;
 import ru.vtosters.lite.dialogs.Requests;
 import ru.vtosters.lite.downloaders.messages.HtmlDialogDownloaderFormatProvider;
 import ru.vtosters.lite.downloaders.messages.MessagesDownloader;
@@ -18,6 +19,7 @@ import java.util.List;
 
 public class DialogMenuInjectors {
     public static void inject(Dialog dialog, List<DialogAction> list) {
+        HookGuard.safe("DialogMenu", () -> {
         int peerId;
 
         try {
@@ -45,6 +47,7 @@ public class DialogMenuInjectors {
         IMProcessor prov = EncryptProvider.getProcessorFor(peerId);
         if (prov != null && !prov.isPublic())
             list.add(DialogAction.ENCRYPT_SETT);
+        });
     }
 
     public static LinkedHashMap<DialogAction, Integer> injectToHashMap(LinkedHashMap<DialogAction, Integer> hashMap) {
@@ -66,6 +69,7 @@ public class DialogMenuInjectors {
     }
 
     public static boolean onClick(Dialog dialog, DialogAction action) { // popup menu in dialogs
+        return HookGuard.safe("DialogMenu", false, () -> {
         int peerId;
 
         try {
@@ -120,6 +124,7 @@ public class DialogMenuInjectors {
         }
 
         return false;
+        });
     }
 
 }
