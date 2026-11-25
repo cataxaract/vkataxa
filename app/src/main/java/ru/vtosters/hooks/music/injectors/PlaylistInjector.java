@@ -11,10 +11,10 @@ import io.reactivex.Observable;
 import io.reactivex.ObservableOnSubscribe;
 import org.json.JSONException;
 import org.json.JSONObject;
+import ru.vtosters.lite.core.music.MusicRepository;
 import ru.vtosters.lite.downloaders.AudioDownloader;
-import ru.vtosters.lite.music.cache.MusicCacheImpl;
 import ru.vtosters.lite.music.cache.helpers.PlaylistHelper;
-import ru.vtosters.lite.music.cache.helpers.TracklistHelper;
+import ru.vtosters.lite.music.repository.MusicRepositoryImpl;
 import ru.vtosters.lite.utils.AccountManagerUtils;
 
 import java.util.ArrayList;
@@ -27,17 +27,21 @@ public class PlaylistInjector {
     private static final ExecutorService executor = Executors.newCachedThreadPool();
     public final static String CHANNEL_NAME = "VTCH";
 
+    private static MusicRepository repo() {
+        return MusicRepositoryImpl.get();
+    }
+
     public static void injectDownloadPlaylist(Playlist playlist) {
         AudioDownloader.cachePlaylist(playlist);
     }
 
     public static boolean eligibleForOfflineCaching() {
-        return !MusicCacheImpl.isEmpty();
+        return !repo().isCacheEmpty();
     }
 
     public static Observable<AudioGetPlaylist.c> injectGetPlaylist(AudioGetPlaylist audioGetPlaylist) {
         try {
-            if (MusicCacheImpl.isEmpty()) {
+            if (repo().isCacheEmpty()) {
                 return null;
             }
             
@@ -87,11 +91,11 @@ public class PlaylistInjector {
                 }
 
                 if (isOwnCachePlaylist) {
-                    response.c = (ArrayList<MusicTrack>) TracklistHelper.getMyCachedMusicTracks();
+                    response.c = new ArrayList<>(repo().cachedTracks().get());
                     response.b = PlaylistHelper.createCachedPlaylistMetadata();
                 } else {
-                    response.c = (ArrayList<MusicTrack>) MusicCacheImpl.getPlaylistSongs(ownerId, id);
-                    response.b = MusicCacheImpl.getPlaylist(id, ownerId);
+                    response.c = new ArrayList<>(repo().cachedPlaylistTracks(ownerId + "_" + id));
+                    response.b = repo().cachedPlaylist(ownerId + "_" + id);
                 }
 
                 observableEmitter.b(response);

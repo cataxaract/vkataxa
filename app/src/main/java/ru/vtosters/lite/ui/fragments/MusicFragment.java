@@ -19,10 +19,9 @@ import ru.vtosters.hooks.other.ThemesUtils;
 import ru.vtosters.lite.downloaders.AudioDownloader;
 import ru.vtosters.lite.music.LastFMScrobbler;
 import ru.vtosters.lite.music.spotify.SpotifyImportActivity;
-import ru.vtosters.lite.music.cache.MusicCacheImpl;
-import ru.vtosters.lite.music.cache.delegate.PlaylistCacheDbDelegate;
+import ru.vtosters.lite.core.music.MusicRepository;
+import ru.vtosters.lite.music.repository.MusicRepositoryImpl;
 import ru.vtosters.lite.ui.PreferenceFragmentUtils;
-import ru.vtosters.lite.utils.AccountManagerUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
 import ru.vtosters.lite.utils.LifecycleUtils;
 
@@ -36,6 +35,10 @@ import static ru.vtosters.hooks.other.ThemesUtils.getTextAttr;
 
 public class MusicFragment extends TrackedMaterialPreferenceToolbarFragment {
     private static final ExecutorService executor = Executors.newCachedThreadPool();
+
+    private static MusicRepository repo() {
+        return MusicRepositoryImpl.get();
+    }
 
     @SuppressLint("DefaultLocale")
     @Override
@@ -52,10 +55,10 @@ public class MusicFragment extends TrackedMaterialPreferenceToolbarFragment {
                 getPreferenceScreen(),
                 "cached_tracks",
                 getString(com.vtosters.lite.R.string.cached_tracks_title),
-                String.format(requireContext().getString(com.vtosters.lite.R.string.cached_tracks_counter), MusicCacheImpl.getTracksCount()),
+                String.format(requireContext().getString(com.vtosters.lite.R.string.cached_tracks_counter), repo().cachedTrackCount()),
                 null,
                 preference -> {
-                    if (MusicCacheImpl.isEmpty()) {
+                    if (repo().isCacheEmpty()) {
                         AndroidUtils.sendToast(requireContext().getString(com.vtosters.lite.R.string.no_cache_error));
                     } else {
                         delcache(requireContext(), false);
@@ -64,12 +67,12 @@ public class MusicFragment extends TrackedMaterialPreferenceToolbarFragment {
                 }
         );
 
-        if (MusicCacheImpl.hasPlaylist()) {
+        if (repo().hasCachedPlaylists()) {
             PreferenceFragmentUtils.addPreference(
                     getPreferenceScreen(),
                     "cached_playlists",
                     "Кешированные плейлисты",
-                    String.format("Скачано плейлистов: %d", MusicCacheImpl.getPlaylists().size()),
+                    String.format("Скачано плейлистов: %d", repo().cachedPlaylistsNow().size()),
                     null,
                     preference -> {
                         cachedPlaylistsDialog(requireContext());
@@ -113,7 +116,7 @@ public class MusicFragment extends TrackedMaterialPreferenceToolbarFragment {
                     Preferences.getPreferences().edit().putBoolean("invertCachedTracks", (boolean) o).apply();
                     return true;
                 }
-        ).setEnabled(!MusicCacheImpl.isEmpty());
+        ).setEnabled(!repo().isCacheEmpty());
 
         PreferenceFragmentUtils.addPreference(
                 getPreferenceScreen(),
@@ -461,7 +464,7 @@ public class MusicFragment extends TrackedMaterialPreferenceToolbarFragment {
 
     @SuppressLint("DefaultLocale")
     private void cachedPlaylistsDialog(Context ctx) {
-        List<Playlist> playlists = PlaylistCacheDbDelegate.getAllPlaylists(ctx);
+        List<Playlist> playlists = repo().cachedPlaylistsNow();
         String[] playlistNames = new String[playlists.size()];
 
         for (int i = 0; i < playlists.size(); i++) {
@@ -473,9 +476,9 @@ public class MusicFragment extends TrackedMaterialPreferenceToolbarFragment {
         builder.setItems(playlistNames, (dialog, which) -> {
             Playlist selectedPlaylist = playlists.get(which);
             String playlistId = selectedPlaylist.v1();
-            PlaylistCacheDbDelegate.deletePlaylist(ctx, playlistId);
+            repo().removeCachedPlaylist(playlistId);
             AndroidUtils.sendToast("Плейлист удален");
-            findPreference("cached_playlists").setSummary(String.format("Скачано плейлистов: %d", MusicCacheImpl.getPlaylists().size()));
+            findPreference("cached_playlists").setSummary(String.format("Скачано плейлистов: %d", repo().cachedPlaylistsNow().size()));
         });
 
         builder.show();
@@ -488,12 +491,12 @@ public class MusicFragment extends TrackedMaterialPreferenceToolbarFragment {
                 .setPositiveButton(com.vtosters.lite.R.string.yes, (dialog, which) -> {
                     executor.submit(() -> {
                         if (isPlaylists) {
-                            PlaylistCacheDbDelegate.removeAllPlaylists(ctx);
+                            repo().removeAllCachedPlaylists();
                         } else {
-                            PlaylistCacheDbDelegate.deletePlaylist(ctx, AccountManagerUtils.getUserId() + "_-1");
+                            repo().clearOwnCachedTracks();
                         }
                     });
-                    findPreference("cached_tracks").setSummary(String.format(requireContext().getString(com.vtosters.lite.R.string.cached_tracks_counter), MusicCacheImpl.getTracksCount()));
+                    findPreference("cached_tracks").setSummary(String.format(requireContext().getString(com.vtosters.lite.R.string.cached_tracks_counter), repo().cachedTrackCount()));
                 })
                 .setNeutralButton(com.vtosters.lite.R.string.no, (dialog, which) -> dialog.cancel())
                 .show();

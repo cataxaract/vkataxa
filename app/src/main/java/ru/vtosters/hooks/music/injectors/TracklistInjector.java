@@ -11,10 +11,10 @@ import io.reactivex.ObservableOnSubscribe;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-import ru.vtosters.lite.music.cache.MusicCacheImpl;
-import ru.vtosters.lite.music.cache.delegate.PlaylistCacheDbDelegate;
+import ru.vtosters.lite.core.music.MusicRepository;
 import ru.vtosters.lite.music.cache.helpers.PlaylistHelper;
 import ru.vtosters.lite.music.cache.helpers.TracklistHelper;
+import ru.vtosters.lite.music.repository.MusicRepositoryImpl;
 import ru.vtosters.lite.utils.AccountManagerUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
 import ru.vtosters.lite.utils.NetworkUtils;
@@ -26,6 +26,10 @@ import java.util.UUID;
 import static ru.vtosters.lite.music.cache.helpers.PlaylistHelper.*;
 
 public class TracklistInjector {
+
+    private static MusicRepository repo() {
+        return MusicRepositoryImpl.get();
+    }
 
     public static boolean eligibleForOfflineCaching() {
         return !NetworkUtils.isNetworkConnected();
@@ -59,10 +63,10 @@ public class TracklistInjector {
                     }
                 });
             } else {
-                if (MusicCacheImpl.isEmpty()) {
+                if (repo().isCacheEmpty()) {
                     observableEmitter.b(parser.c(getEmptyCatalog()));
                 } else {
-                    observableEmitter.b(parser.c(createVirtualCatalog(TracklistHelper.getMyCachedMusicTracks())));
+                    observableEmitter.b(parser.c(createVirtualCatalog(repo().cachedTracks().get())));
                 }
             }
         });
@@ -138,7 +142,7 @@ public class TracklistInjector {
 
         button.put("action", action);
         button.put("block_id", "shuffle");
-        button.put("ref_items_count", MusicCacheImpl.getTracksCount());
+        button.put("ref_items_count", repo().cachedTrackCount());
         button.put("ref_layout_name", "list");
         button.put("ref_data_type", "music_audios");
 
@@ -161,7 +165,7 @@ public class TracklistInjector {
 
             JSONArray blocks = firstSection.getJSONArray("blocks");
 
-            if (!MusicCacheImpl.isEmpty() && !LibVKXClient.isIntegrationEnabled()) { // inj in playlist list
+            if (!repo().isCacheEmpty() && !LibVKXClient.isIntegrationEnabled()) { // inj in playlist list
                 boolean noPlaylists = hasNoPlaylists(blocks);
 
                 if (noPlaylists) {
@@ -241,13 +245,13 @@ public class TracklistInjector {
 
         var blocks = new JSONArray();
 
-        if (MusicCacheImpl.hasPlaylist()) {
+        if (repo().hasCachedPlaylists()) {
             blocks.put(getCatalogHeader("Кешированные плейлисты"))
                     .put(getCatalogPlaylist());
         }
 
-        if (!PlaylistCacheDbDelegate.isPlaylistEmpty(AndroidUtils.getGlobalContext(), AccountManagerUtils.getUserId() + "_-1")) {
-            if (MusicCacheImpl.hasPlaylist()) blocks.put(getCatalogSeparator());
+        if (!repo().isOwnCachePlaylistEmpty()) {
+            if (repo().hasCachedPlaylists()) blocks.put(getCatalogSeparator());
             blocks.put(getCatalogHeader(AndroidUtils.getString(R.string.cached_tracks_title)))
                     .put(getShuffleButton())
                     .put(audiosBlock);

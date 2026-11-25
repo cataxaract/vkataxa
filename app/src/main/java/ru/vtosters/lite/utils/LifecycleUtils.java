@@ -26,6 +26,7 @@ public class LifecycleUtils {
             public void onActivityResumed(Activity activity) {
                 activities.add(activity);
                 ru.vtosters.hooks.other.Preferences.applyStrictModePolicy(); // SEC-02: late main-thread policy
+                ru.vtosters.lite.music.bulk.MusicBulkController.onActivityResumed(activity); // MU-02
             }
 
             @Override // android.app.Application.ActivityLifecycleCallbacks

@@ -6,14 +6,18 @@ import com.vtosters.lite.R;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-import ru.vtosters.lite.music.cache.MusicCacheImpl;
-import ru.vtosters.lite.music.cache.delegate.PlaylistCacheDbDelegate;
+import ru.vtosters.lite.core.music.MusicRepository;
+import ru.vtosters.lite.music.repository.MusicRepositoryImpl;
 import ru.vtosters.lite.utils.AccountManagerUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
 import ru.vtosters.lite.utils.NetworkUtils;
 import ru.vtosters.lite.utils.music.PlaylistUtils;
 
 public class PlaylistHelper {
+
+    private static MusicRepository repo() {
+        return MusicRepositoryImpl.get();
+    }
 
     public static Playlist createCachedPlaylistMetadata() {
         try {
@@ -25,12 +29,12 @@ public class PlaylistHelper {
 
     public static JSONArray addCachedPlaylists(JSONArray jsonArray) {
         try {
-            if (!PlaylistCacheDbDelegate.isPlaylistEmpty(AndroidUtils.getGlobalContext(), AccountManagerUtils.getUserId() + "_-1")) {
+            if (!repo().isOwnCachePlaylistEmpty()) {
                 jsonArray.put(getCachedSongsPlaylist());
             }
 
-            if (MusicCacheImpl.hasPlaylist()) {
-                for (Playlist playlist : MusicCacheImpl.getPlaylists()) {
+            if (repo().hasCachedPlaylists()) {
+                for (Playlist playlist : repo().cachedPlaylistsNow()) {
                     jsonArray.put(generatePlaylist(playlist.a, playlist.b, playlist.C, playlist.g, playlist.B, PlaylistUtils.getThumb(playlist)));
 
                     Log.d("PlaylistHelper", "Playlist cache added: " + playlist.a + " " + playlist.b + " " + playlist.C + " " + playlist.g + " " + playlist.B);
@@ -104,11 +108,11 @@ public class PlaylistHelper {
     public static JSONArray getCachedPlaylistsIds() {
         JSONArray arr = new JSONArray();
 
-        if (NetworkUtils.isNetworkConnected() && !PlaylistCacheDbDelegate.isPlaylistEmpty(AndroidUtils.getGlobalContext(), AccountManagerUtils.getUserId() + "_-1")) {
+        if (NetworkUtils.isNetworkConnected() && !repo().isOwnCachePlaylistEmpty()) {
             arr.put(AccountManagerUtils.getUserId() + "_-1");
         }
 
-        for (String playlist : PlaylistCacheDbDelegate.getAllPlaylistIds(AndroidUtils.getGlobalContext())) {
+        for (String playlist : repo().allCachedPlaylistIds()) {
             arr.put(playlist);
         }
 

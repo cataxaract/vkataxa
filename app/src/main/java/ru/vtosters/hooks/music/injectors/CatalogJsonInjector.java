@@ -10,8 +10,9 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import ru.vtosters.hooks.other.Preferences;
+import ru.vtosters.lite.core.music.MusicRepository;
 import ru.vtosters.lite.music.cache.helpers.PlaylistHelper;
-import ru.vtosters.lite.music.cache.MusicCacheImpl;
+import ru.vtosters.lite.music.repository.MusicRepositoryImpl;
 import ru.vtosters.lite.utils.AccountManagerUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
 import ru.vtosters.sponsorpost.utils.GzipDecompressor;
@@ -28,6 +29,11 @@ import static ru.vtosters.lite.proxy.ProxyUtils.getApi;
 import static ru.vtosters.lite.utils.AccountManagerUtils.getUserId;
 
 public class CatalogJsonInjector {
+
+    private static MusicRepository repo() {
+        return MusicRepositoryImpl.get();
+    }
+
     public static JSONObject music(JSONObject json) throws JSONException {
         var catalog = json.optJSONObject("catalog");
         var oldItems = catalog != null ? catalog.optJSONArray("sections") : null;
@@ -54,7 +60,7 @@ public class CatalogJsonInjector {
                 setDefaultAudioPage(oldItems, catalog);
             }
 
-            if (!MusicCacheImpl.isEmpty() && !LibVKXClient.isIntegrationEnabled()) { // inj in playlist list
+            if (!repo().isCacheEmpty() && !LibVKXClient.isIntegrationEnabled()) { // inj in playlist list
                 var noPlaylists = !json.has("playlists");
 
                 if (noPlaylists) {
@@ -96,7 +102,7 @@ public class CatalogJsonInjector {
             fixDailyMix(blocks);
             removeUnsupportedLayouts(blocks);
 
-            if (!isUsersCatalog || MusicCacheImpl.isEmpty() || LibVKXClient.isIntegrationEnabled()) {
+            if (!isUsersCatalog || repo().isCacheEmpty() || LibVKXClient.isIntegrationEnabled()) {
                 return; // early return if not users catalog or no tracks or integration enabled
             }
 
