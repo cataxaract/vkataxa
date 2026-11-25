@@ -20,9 +20,20 @@ cargo {
 def smaliFolder = projectDir.toPath().resolve("../smali").normalize()
 def scriptsFolder = projectDir.toPath().resolve("../scripts").normalize()
 //you can add own folders with decompiled smali code
-def dexes = smaliFolder.toFile()
-        .listFiles({ f -> f.isDirectory() && f.name.startsWith("smali") } as FileFilter)
-        .size()
+def smaliDirs = smaliFolder.toFile().isDirectory()
+        ? (smaliFolder.toFile().listFiles({ f -> f.isDirectory() && f.name.matches("smali(_classes\\d+)?") } as FileFilter) ?: new File[0])
+        : new File[0]
+smaliDirs = smaliDirs.sort { it.name }
+if (smaliDirs.length == 0) {
+    throw new GradleException("smali/: no smali* directories in " + smaliFolder + " - decode the client first")
+}
+smaliDirs.eachWithIndex { dir, i ->
+    def expected = i == 0 ? "smali" : "smali_classes" + (i + 1)
+    if (dir.name != expected) {
+        throw new GradleException("smali/: expected " + expected + ", found " + dir.name + " (non-contiguous smali layout)")
+    }
+}
+def dexes = smaliDirs.length
 
 versionFile {
     file = projectDir.toPath().resolve("src/main/assets/version.properties").toFile()
@@ -45,6 +56,7 @@ android {
         versionName "1.0"
         multiDexEnabled true
         buildConfigField 'String', 'APPCENTER_KEY', '""'
+        buildConfigField 'String', 'SPOTIFY_CLIENT_ID', '"e8dc2fe6ae6c43078aec9aeb120e36f0"'
     }
 
     buildTypes {
@@ -112,26 +124,42 @@ task generateBuildTasks() {
                         String apkPath = projectDir.getAbsolutePath() + "/build/outputs/apk/$suffix/app-$suffix"
                         def apk = new File(apkPath + "-unsigned.apk")
                         if (!apk.exists()) apk = new File(apkPath + ".apk")
-                        def zip = new ZipFile(apk)
+                        if (!apk.exists()) {
+                            throw new GradleException("exportDex$buildType: APK not found at " + apkPath + "(-unsigned.apk|.apk)")
+                        }
                         def dexCounter = dexes
-                        zip.stream()
-                                .filter(entry -> entry.name.matches("^classes(?:(?=\\d)2|)\\.dex\$") || entry.name == "assets/version.properties")
-                                .forEach(entry -> {
-                                    String filename
-                                    if (entry.name.matches("^classes(?:(?=\\d)2|)\\.dex\$")) filename = "classes${++dexCounter}.dex"
-                                    else filename = "version.properties"
-                                    println("Exporting " + entry.name)
-                                    def tmpFile = new File(projectDir, filename)
-                                    try (def is = zip.getInputStream(entry); def fos = new FileOutputStream(tmpFile)) {
-                                        def buff = new byte[0x800]
-                                        int len
-                                        while ((len = is.read(buff)) > 0) fos.write(buff, 0, len)
-                                    }
-                                });
+                        def exportedDex = 0
+                        def zip = new ZipFile(apk)
+                        try {
+                            zip.stream()
+                                    .filter(entry -> entry.name.matches("^classes\\d*\\.dex\$") || entry.name == "assets/version.properties")
+                                    .forEach(entry -> {
+                                        boolean isDex = entry.name.matches("^classes\\d*\\.dex\$")
+                                        String filename = isDex ? "classes${++dexCounter}.dex" : "version.properties"
+                                        println("Exporting " + entry.name + " -> " + filename)
+                                        def tmpFile = new File(projectDir, filename)
+                                        try (def is = zip.getInputStream(entry); def fos = new FileOutputStream(tmpFile)) {
+                                            def buff = new byte[0x800]
+                                            int len
+                                            while ((len = is.read(buff)) > 0) fos.write(buff, 0, len)
+                                        }
+                                        if (tmpFile.length() == 0) {
+                                            throw new GradleException("exportDex$buildType: exported " + filename + " is empty")
+                                        }
+                                        if (isDex) exportedDex++
+                                    })
+                        } finally {
+                            zip.close()
+                        }
+                        if (exportedDex == 0) {
+                            throw new GradleException("exportDex$buildType: no classes*.dex found in " + apk.name)
+                        }
+                        println("Exported " + exportedDex + " dex file(s) for $buildType")
+                    } catch (GradleException e) {
+                        throw e
                     } catch (Exception e) {
-                        e.printStackTrace()
+                        throw new GradleException("exportDex$buildType failed: " + e.message, e)
                     }
-
                 }
             }
             task "prepareDexForMerge$buildType"(type: Copy) {
@@ -169,6 +197,16 @@ task generateBuildTasks() {
                     commandLine 'bash', '-c', './scripts/build.sh'
                 } else {
                     commandLine 'cmd', '/C', '.\\scripts\\build.bat'
+                }
+            }
+            task "buildFastVTL$buildType"(type: Exec) {
+                dependsOn('exportDex' + buildType)
+                workingDir(projectDir.parentFile)
+                finalizedBy "cleanTemporaryFiles$buildType"
+                if (Os.isFamily("unix") || Os.isFamily("mac")) {
+                    commandLine 'bash', '-c', './scripts/build_fast.sh'
+                } else {
+                    commandLine 'cmd', '/C', '.\\scripts\\build_fast.bat'
                 }
             }
             task "buildAndInstallVTL$buildType"(type: Exec) {

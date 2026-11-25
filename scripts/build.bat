@@ -23,22 +23,27 @@ if "%ERRORLEVEL%" == "0" (
     echo %ESC%[31mFailed%ESC%[0m
     exit /B 1
 )
+copy /Y ..\build-output\VTLite.apk ..\build-output\VTLite-base.apk >nul
 
 echo.
 echo %ESC%[1;4mZipaligning...%ESC%[0m
 echo.
-where zipalign >nul 2>nul
-if errorlevel 1 (
-    echo %ESC%[33mzipalign not found, alignment skipped%ESC%[0m
-) else (
-    call zipalign -p -f 4 ..\build-output\VTLite.apk ..\build-output\VTLite.apk_aligned
-    if errorlevel 1 (
-        echo %ESC%[31mZipalign failed%ESC%[0m
-        exit /B 1
-    )
-    move /Y ..\build-output\VTLite.apk_aligned ..\build-output\VTLite.apk >nul
-    echo %ESC%[92mZipalign successful%ESC%[0m
+set "ZIPALIGN="
+for /f "delims=" %%z in ('where zipalign 2^>nul') do if not defined ZIPALIGN set "ZIPALIGN=%%z"
+if not defined ZIPALIGN if defined ANDROID_HOME call :find_bt "%ANDROID_HOME%\build-tools"
+if not defined ZIPALIGN if defined ANDROID_SDK_ROOT call :find_bt "%ANDROID_SDK_ROOT%\build-tools"
+if not defined ZIPALIGN call :find_bt "%LOCALAPPDATA%\Android\Sdk\build-tools"
+if not defined ZIPALIGN (
+    echo %ESC%[31mzipalign not found - install build-tools or set ANDROID_HOME%ESC%[0m
+    exit /B 1
 )
+call "%ZIPALIGN%" -p -f 4 ..\build-output\VTLite.apk ..\build-output\VTLite.apk_aligned
+if errorlevel 1 (
+    echo %ESC%[31mZipalign failed%ESC%[0m
+    exit /B 1
+)
+move /Y ..\build-output\VTLite.apk_aligned ..\build-output\VTLite.apk >nul
+echo %ESC%[92mZipalign successful%ESC%[0m
 
 echo.
 echo %ESC%[1;4mSign apk...%ESC%[0m
@@ -51,6 +56,12 @@ if "%ERRORLEVEL%" == "0" (
     exit /B 1
 )
 
+call java -jar ../scripts/apksigner.jar verify ../build-output/VTLite.apk
+if errorlevel 1 (
+    echo %ESC%[31mAPK verify failed%ESC%[0m
+    exit /B 1
+)
+
 copy /Y ..\RELEASE_NOTES.md ..\build-output\RELEASE_NOTES.md >nul
 
 :setESC
@@ -59,3 +70,9 @@ for /F "tokens=1,2 delims=#" %%a in ('"prompt #$H#$E# & echo on & for %%b in (1)
   exit /B 0
 )
 exit
+
+:find_bt
+for /f "delims=" %%d in ('dir /b /ad /o-n "%~1" 2^>nul') do (
+    if not defined ZIPALIGN if exist "%~1\%%d\zipalign.exe" set "ZIPALIGN=%~1\%%d\zipalign.exe"
+)
+exit /B 0
