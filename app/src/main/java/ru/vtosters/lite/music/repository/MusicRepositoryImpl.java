@@ -12,6 +12,7 @@ import com.vk.dto.music.Playlist;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,11 +32,12 @@ import ru.vtosters.lite.music.cache.delegate.PlaylistCacheDbDelegate;
 import ru.vtosters.lite.music.cache.helpers.TracklistHelper;
 import ru.vtosters.lite.utils.AccountManagerUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
+import ru.vtosters.lite.utils.NetworkUtils;
 
 /**
- * Default {@link MusicRepository} (UI-BE-01): wraps the existing music cache and VK API.
- * The offline cache part is production-ready; the like part is the MU-01 foundation and keeps
- * its index in memory only (no TTL/persistence yet).
+ * Default {@link MusicRepository} (UI-BE-01/MU-01): wraps the existing music cache and VK API.
+ * Liked ids are persisted per account in {@link MusicLikesDb}; the full liked list is refreshed
+ * from audio.get with a 15 minute TTL. The like/unlike calls are deduplicated locally.
  */
 public final class MusicRepositoryImpl implements MusicRepository {
 
@@ -43,6 +45,8 @@ public final class MusicRepositoryImpl implements MusicRepository {
     private static final int LIKED_PAGE = 100;
     private static final int LIKED_MAX = 20_000;
     private static final long API_TIMEOUT_SECONDS = 30L;
+    private static final long LIKED_TTL_MS = 15 * 60 * 1000L;
+    private static final long LIKED_FAILURE_BACKOFF_MS = 60 * 1000L;
 
     private static final MusicRepositoryImpl INSTANCE = new MusicRepositoryImpl();
 
@@ -58,10 +62,13 @@ public final class MusicRepositoryImpl implements MusicRepository {
     private final Map<String, MutableStore<Boolean>> likedFlags = new ConcurrentHashMap<>();
     private final Set<String> likedIds = ConcurrentHashMap.newKeySet();
     private final Object likedLock = new Object();
+    private final Object likedLoadLock = new Object();
     private final AtomicBoolean likedLoading = new AtomicBoolean();
 
     private volatile boolean cacheLoaded;
-    private volatile boolean likedLoaded;
+    private volatile boolean likedIndexLoaded;
+    private volatile boolean likedSynced;
+    private volatile long lastLikedAttemptAt;
 
     private MusicRepositoryImpl() {
     }
@@ -76,17 +83,29 @@ public final class MusicRepositoryImpl implements MusicRepository {
 
     @Override
     public Store<Boolean> isLiked(String trackId) {
-        MutableStore<Boolean> store = likedFlags.computeIfAbsent(
-                trackId == null ? "" : trackId,
-                id -> new MutableStore<>(likedIds.contains(id)));
-        ensureLikedLoaded();
-        return store;
+        ensureLikedIndexLoaded();
+        maybeRefreshLiked();
+        String key = trackId == null ? "" : trackId;
+        return likedFlags.computeIfAbsent(key, id -> new MutableStore<>(likedIds.contains(id)));
+    }
+
+    @Override
+    public boolean isLikedNow(String trackId) {
+        ensureLikedIndexLoaded();
+        return trackId != null && !trackId.isEmpty() && likedIds.contains(trackId);
+    }
+
+    @Override
+    public boolean hasSyncedLikes() {
+        ensureLikedIndexLoaded();
+        return likedSynced;
     }
 
     @Override
     public void like(MusicTrack track) {
         String id = idOf(track);
-        if (id == null || likedIds.contains(id)) {
+        ensureLikedIndexLoaded();
+        if (id == null || likedIds.contains(id) || !NetworkUtils.isNetworkConnected()) {
             return;
         }
 
@@ -114,7 +133,8 @@ public final class MusicRepositoryImpl implements MusicRepository {
     @Override
     public void unlike(MusicTrack track) {
         String id = idOf(track);
-        if (id == null || !likedIds.contains(id)) {
+        ensureLikedIndexLoaded();
+        if (id == null || !NetworkUtils.isNetworkConnected()) {
             return;
         }
 
@@ -184,7 +204,8 @@ public final class MusicRepositoryImpl implements MusicRepository {
 
     @Override
     public Store<List<MusicTrack>> likedTracks() {
-        ensureLikedLoaded();
+        ensureLikedIndexLoaded();
+        maybeRefreshLiked();
         return likedTracksStore;
     }
 
@@ -196,29 +217,39 @@ public final class MusicRepositoryImpl implements MusicRepository {
 
     @Override
     public void refreshLiked() {
+        ensureLikedIndexLoaded();
+        if (!NetworkUtils.isNetworkConnected()) {
+            return;
+        }
         if (!likedLoading.compareAndSet(false, true)) {
             return;
         }
 
+        lastLikedAttemptAt = System.currentTimeMillis();
         VTExecutors.getIoExecutor().execute(() -> {
             try {
                 List<MusicTrack> tracks = loadLikedSync();
+                Set<String> ids = new HashSet<>();
+                for (MusicTrack track : tracks) {
+                    String id = idOf(track);
+                    if (id != null) {
+                        ids.add(id);
+                    }
+                }
+                MusicLikesDb.get().replaceAll(
+                        AccountManagerUtils.getUserId(), ids, System.currentTimeMillis());
+
                 synchronized (likedLock) {
                     likedIds.clear();
-                    for (MusicTrack track : tracks) {
-                        String id = idOf(track);
-                        if (id != null) {
-                            likedIds.add(id);
-                        }
-                    }
+                    likedIds.addAll(ids);
                     likedTracksStore.set(Collections.unmodifiableList(new ArrayList<>(tracks)));
                     for (Map.Entry<String, MutableStore<Boolean>> entry : likedFlags.entrySet()) {
                         entry.getValue().set(likedIds.contains(entry.getKey()));
                     }
                 }
-                likedLoaded = true;
+                likedIndexLoaded = true;
+                likedSynced = true;
             } catch (Throwable t) {
-                likedLoaded = false;
                 VtLog.e(TAG, "refreshLiked failed", t);
             } finally {
                 likedLoading.set(false);
@@ -440,10 +471,55 @@ public final class MusicRepositoryImpl implements MusicRepository {
         cacheLoaded = true;
     }
 
-    private void ensureLikedLoaded() {
-        if (!likedLoaded) {
-            refreshLiked();
+    private void ensureLikedIndexLoaded() {
+        if (likedIndexLoaded) {
+            return;
         }
+        synchronized (likedLoadLock) {
+            if (likedIndexLoaded) {
+                return;
+            }
+            Set<String> ids = Collections.emptySet();
+            try {
+                int account = AccountManagerUtils.getUserId();
+                ids = MusicLikesDb.get().ids(account);
+                likedSynced = MusicLikesDb.get().syncedAt(account) > 0L;
+            } catch (Throwable t) {
+                VtLog.e(TAG, "liked index load failed", t);
+            }
+            synchronized (likedLock) {
+                likedIds.clear();
+                likedIds.addAll(ids);
+                for (Map.Entry<String, MutableStore<Boolean>> entry : likedFlags.entrySet()) {
+                    entry.getValue().set(likedIds.contains(entry.getKey()));
+                }
+            }
+            likedIndexLoaded = true;
+        }
+    }
+
+    private void maybeRefreshLiked() {
+        if (!NetworkUtils.isNetworkConnected()) {
+            return;
+        }
+        int account = AccountManagerUtils.getUserId();
+        if (account == 0) {
+            return;
+        }
+        long syncedAt = 0L;
+        try {
+            syncedAt = MusicLikesDb.get().syncedAt(account);
+        } catch (Throwable t) {
+            VtLog.e(TAG, "liked sync time read failed", t);
+        }
+        long now = System.currentTimeMillis();
+        if (now - syncedAt < LIKED_TTL_MS) {
+            return;
+        }
+        if (now - lastLikedAttemptAt < LIKED_FAILURE_BACKOFF_MS) {
+            return;
+        }
+        refreshLiked();
     }
 
     private List<MusicTrack> loadLikedSync() throws Exception {
@@ -500,8 +576,10 @@ public final class MusicRepositoryImpl implements MusicRepository {
         if (id == null) {
             return;
         }
+        final int account = AccountManagerUtils.getUserId();
         synchronized (likedLock) {
             likedIds.add(id);
+            likedIndexLoaded = true;
             MutableStore<Boolean> flag = likedFlags.get(id);
             if (flag != null) {
                 flag.set(true);
@@ -510,12 +588,14 @@ public final class MusicRepositoryImpl implements MusicRepository {
             List<MusicTrack> current = new ArrayList<>(likedTracksStore.get());
             for (MusicTrack existing : current) {
                 if (id.equals(idOf(existing))) {
+                    persistLiked(account, id, true);
                     return;
                 }
             }
             current.add(0, track);
             likedTracksStore.set(Collections.unmodifiableList(current));
         }
+        persistLiked(account, id, true);
     }
 
     void markUnliked(MusicTrack track) {
@@ -523,8 +603,10 @@ public final class MusicRepositoryImpl implements MusicRepository {
         if (id == null) {
             return;
         }
+        final int account = AccountManagerUtils.getUserId();
         synchronized (likedLock) {
             likedIds.remove(id);
+            likedIndexLoaded = true;
             MutableStore<Boolean> flag = likedFlags.get(id);
             if (flag != null) {
                 flag.set(false);
@@ -538,6 +620,21 @@ public final class MusicRepositoryImpl implements MusicRepository {
             }
             likedTracksStore.set(Collections.unmodifiableList(current));
         }
+        persistLiked(account, id, false);
+    }
+
+    private static void persistLiked(int account, String trackId, boolean liked) {
+        VTExecutors.getIoExecutor().execute(() -> {
+            try {
+                if (liked) {
+                    MusicLikesDb.get().add(account, trackId);
+                } else {
+                    MusicLikesDb.get().remove(account, trackId);
+                }
+            } catch (Throwable t) {
+                VtLog.e(TAG, "liked index write failed", t);
+            }
+        });
     }
 
     private static String idOf(MusicTrack track) {

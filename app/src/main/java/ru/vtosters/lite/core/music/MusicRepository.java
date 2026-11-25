@@ -16,6 +16,10 @@ public interface MusicRepository {
 
     Store<Boolean> isLiked(String trackId);
 
+    boolean isLikedNow(String trackId);
+
+    boolean hasSyncedLikes();
+
     void like(MusicTrack track);
 
     void unlike(MusicTrack track);

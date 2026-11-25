@@ -7,6 +7,7 @@ import com.vk.dto.music.Playlist;
 import com.vk.music.bottomsheets.a.MusicAction;
 import com.vk.music.common.MusicPlaybackLaunchContext;
 import com.vtosters.lite.R;
+import ru.vtosters.lite.core.flags.FeatureFlags;
 import ru.vtosters.lite.core.music.MusicRepository;
 import ru.vtosters.lite.downloaders.AudioDownloader;
 import ru.vtosters.lite.music.repository.MusicRepositoryImpl;
@@ -48,7 +49,44 @@ public class MusicBottomSheetHook {
 
         if (isNetworkConnected()) actions.add(downloadAsMp3Action());
 
+        // TEMP-UI(MU-01): replace the native add/remove action with the locally indexed state.
+        // Keep the native action until audio.get has been fetched once, so first-run labels are
+        // not wrong for tracks that are already liked.
+        if (FeatureFlags.isEnabled(FeatureFlags.Flag.MUSIC_LIKE) && isNetworkConnected()) {
+            repo().isLiked(trackId); // kicks the 15 minute audio.get refresh
+            if (repo().hasSyncedLikes()) {
+                int insertAt = takeLikeActionIndex(actions);
+                boolean liked = repo().isLikedNow(trackId);
+                MusicAction action = new MusicAction(
+                        liked ? R.id.music_action_remove_from_my_music : R.id.music_action_add_to_my_music,
+                        liked ? R.drawable.ic_like_24 : R.drawable.ic_like_outline_24,
+                        liked ? R.string.music_remove_from_my_music : R.string.music_add_to_my_music,
+                        R.color.caption_gray,
+                        R.string.music_talkback_empty,
+                        false
+                );
+                if (insertAt >= 0 && insertAt <= actions.size()) {
+                    actions.add(insertAt, action);
+                } else {
+                    actions.add(action);
+                }
+            }
+        }
+
         return actions;
+    }
+
+    private static int takeLikeActionIndex(ArrayList<MusicAction> actions) {
+        int insertAt = -1;
+        for (int i = actions.size() - 1; i >= 0; i--) {
+            int id = actions.get(i).a();
+            if (id == R.id.music_action_add_to_my_music
+                    || id == R.id.music_action_remove_from_my_music) {
+                insertAt = i;
+                actions.remove(i);
+            }
+        }
+        return insertAt;
     }
 
 
@@ -103,6 +141,19 @@ public class MusicBottomSheetHook {
     }
 
     public static boolean injectOnClick(int actionId, MusicTrack track, MusicPlaybackLaunchContext context, Playlist playlist) { // musictrack inj
+        // TEMP-UI(MU-01): route the native add/remove action through the deduplicating repository.
+        if (FeatureFlags.isEnabled(FeatureFlags.Flag.MUSIC_LIKE) && track != null
+                && isNetworkConnected()) {
+            if (actionId == R.id.music_action_add_to_my_music) {
+                repo().like(track);
+                return true;
+            }
+            if (actionId == R.id.music_action_remove_from_my_music) {
+                repo().unlike(track);
+                return true;
+            }
+        }
+
         if (actionId == R.id.play_in_vkx)
             return tryPlayInVKX(track, context, playlist);
 
