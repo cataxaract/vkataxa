@@ -155,6 +155,19 @@ public final class CsvPlaylistParser {
         if (value == null) {
             return 0;
         }
+        String trimmed = value.trim();
+        if (trimmed.contains(":")) {
+            String[] parts = trimmed.split(":");
+            try {
+                long total = 0;
+                for (String part : parts) {
+                    total = total * 60 + Long.parseLong(part.trim());
+                }
+                return (int) Math.min(total * 1000, Integer.MAX_VALUE);
+            } catch (NumberFormatException ignored) {
+                return 0;
+            }
+        }
         StringBuilder digits = new StringBuilder();
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);

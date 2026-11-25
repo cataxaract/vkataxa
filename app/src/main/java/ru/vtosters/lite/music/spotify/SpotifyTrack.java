@@ -22,6 +22,10 @@ public final class SpotifyTrack {
     }
 
     public boolean usable() {
+        if ("local".equals(type)) {
+            return id != null && !id.isEmpty()
+                    && title != null && !title.isEmpty();
+        }
         return !local && "track".equals(type) && id != null && !id.isEmpty()
                 && title != null && !title.isEmpty()
                 && artist != null && !artist.isEmpty();

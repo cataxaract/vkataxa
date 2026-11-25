@@ -128,12 +128,23 @@
     :try_start_0
     iget-object v0, p0, Lcom/vtosters/lite/CaptchaActivity;->a:Ljava/lang/String;
 
-    invoke-static {v0}, Lcom/vk/core/network/Network;->a(Ljava/lang/String;)[B
+    invoke-static {v0}, Lru/vtosters/lite/utils/CaptchaImageLoader;->load(Ljava/lang/String;)[B
 
     move-result-object v0
 
     if-eqz v0, :cond_0
 
+    invoke-static {v0}, Lru/vtosters/lite/utils/CaptchaImageLoader;->shouldAutoCancel([B)Z
+
+    move-result v1
+
+    if-eqz v1, :cond_auto
+
+    invoke-direct {p0}, Lcom/vtosters/lite/CaptchaActivity;->c()V
+
+    return-void
+
+    :cond_auto
     const/4 v1, 0x0
 
     .line 4

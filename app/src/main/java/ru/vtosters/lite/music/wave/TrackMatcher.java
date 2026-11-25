@@ -31,7 +31,30 @@ public final class TrackMatcher {
     }
 
     public static String query(String artist, String title) {
-        return artist + " " + title;
+        String cleanArtist = cleanQueryPart(artist);
+        String cleanTitle = cleanQueryPart(title);
+        if (cleanArtist.isEmpty()) {
+            return cleanTitle;
+        }
+        if (cleanTitle.isEmpty()) {
+            return cleanArtist;
+        }
+        return cleanArtist + " " + cleanTitle;
+    }
+
+    public static String titleQuery(String title) {
+        return cleanQueryPart(title);
+    }
+
+    private static String cleanQueryPart(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value
+                .replaceAll("\\([^)]*\\)", " ")
+                .replaceAll("\\[[^]]*]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 
     public static Result pickBest(List<MusicTrack> tracks, String artist, String title, int durationSeconds) {

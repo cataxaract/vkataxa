@@ -1,11 +1,14 @@
 package ru.vtosters.lite.music.spotify;
 
 import android.content.Context;
+import android.util.Log;
 
+import com.vk.api.sdk.exceptions.VKApiExecutionException;
 import com.vk.dto.music.MusicTrack;
 import com.vk.dto.music.Playlist;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,9 +16,19 @@ import java.util.Map;
 import java.util.Set;
 
 import ru.vtosters.lite.music.wave.TrackMatcher;
+import ru.vtosters.lite.utils.CaptchaImageLoader;
+import ru.vtosters.lite.utils.music.MusicTrackUtils;
 
 public final class SpotifyImportService {
-    private static final long SEARCH_DELAY_MS = 260L;
+    private static final String TAG = "VKataxaImport";
+    private static final int SEARCH_COUNT = 10;
+    private static final int MATCH_BATCH = 10;
+    private static final long BATCH_DELAY_MS = 500L;
+    private static final int SEARCHES_BEFORE_PAUSE = 30;
+    private static final long SEARCH_PAUSE_MS = 60_000L;
+    private static final int CAPTCHA_RETRIES = 4;
+    private static final long CAPTCHA_WAIT_MS = 3 * 60_000L;
+    private static final long CAPTCHA_WAIT_MAX_MS = 30 * 60_000L;
 
     private SpotifyImportService() {
     }
@@ -36,12 +49,30 @@ public final class SpotifyImportService {
         public int notFound;
         public int added;
         public int removed;
+        public int skipped;
+        public int failed;
         public boolean created;
+        public boolean localImport;
         public String playlistName;
         public int ownerId;
         public int playlistId;
+        public final List<String> notFoundTracks = new ArrayList<>();
 
         public String summary() {
+            if (localImport) {
+                StringBuilder builder = new StringBuilder("Добавлено в «Мою музыку»: ").append(added);
+                if (skipped > 0) {
+                    builder.append(", уже было: ").append(skipped);
+                }
+                if (notFound > 0) {
+                    builder.append(", не найдено: ").append(notFound);
+                }
+                if (failed > 0) {
+                    builder.append(", ошибок: ").append(failed);
+                }
+                return builder.toString();
+            }
+
             if (created) {
                 return "Импортировано: " + matched + " треков"
                         + (approximate > 0 ? ", приблизительно " + approximate : "")
@@ -93,6 +124,7 @@ public final class SpotifyImportService {
             Progress progress,
             Callback callback
     ) {
+        CaptchaImageLoader.setAutoCancelPlaceholder(true);
         try {
             Result result = new Result();
             result.playlistName = playlistName;
@@ -143,6 +175,155 @@ public final class SpotifyImportService {
             callback.onDone(result);
         } catch (Throwable error) {
             callback.onError(error);
+        } finally {
+            CaptchaImageLoader.setAutoCancelPlaceholder(false);
+        }
+    }
+
+    public static void importLocalMusic(
+            Context context,
+            List<SpotifyTrack> localTracks,
+            boolean onlyNew,
+            Progress progress,
+            Callback callback
+    ) {
+        CaptchaImageLoader.setAutoCancelPlaceholder(true);
+        try {
+            Result result = new Result();
+            result.localImport = true;
+
+            progress.onProgress(0, localTracks.size(), "Сверяем с «Моей музыкой»...");
+            List<MusicTrack> myMusic = getMyMusicWithRetry(localTracks.size(), progress);
+            Set<String> existing = new HashSet<>();
+            Map<String, List<MusicTrack>> byTitle = new HashMap<>();
+            for (MusicTrack track : myMusic) {
+                existing.add(track.y1());
+                if (track.f != null) {
+                    byTitle.computeIfAbsent(TrackMatcher.normalize(track.f), key -> new ArrayList<>())
+                            .add(track);
+                }
+            }
+
+            List<Match> matches = new ArrayList<>();
+            List<SpotifyTrack> toSearch = new ArrayList<>();
+            for (SpotifyTrack local : localTracks) {
+                TrackMatcher.Result already = TrackMatcher.pickBest(
+                        byTitle.get(TrackMatcher.normalize(local.title)),
+                        local.artist,
+                        local.title,
+                        local.durationSeconds()
+                );
+                if (TrackMatcher.acceptable(already)) {
+                    matches.add(new Match(local, already.track, already.score));
+                } else {
+                    toSearch.add(local);
+                }
+            }
+
+            if (!toSearch.isEmpty()) {
+                Result searchResult = new Result();
+                matches.addAll(matchTracks(toSearch, progress, searchResult));
+                result.notFound = searchResult.notFound;
+                result.notFoundTracks.addAll(searchResult.notFoundTracks);
+            }
+            result.matched = matches.size();
+
+            List<MusicTrack> toAdd = new ArrayList<>();
+            for (Match match : matches) {
+                if (onlyNew && existing.contains(match.track.y1())) {
+                    result.skipped++;
+                } else {
+                    toAdd.add(match.track);
+                }
+            }
+
+            int added = 0;
+            int processed = 0;
+            for (MusicTrack track : toAdd) {
+                progress.onProgress(processed, toAdd.size(),
+                        "Добавляем в «Мою музыку»: " + MusicTrackUtils.getArtists(track) + " — " + track.f);
+                try {
+                    addToMyMusicWithRetry(track, processed, toAdd.size(), progress);
+                    added++;
+                } catch (Throwable error) {
+                    if (isCaptchaError(error)) {
+                        throw error;
+                    }
+                    result.failed++;
+                }
+                processed++;
+                if (processed < toAdd.size()) {
+                    Thread.sleep(300L);
+                    if (processed % SEARCHES_BEFORE_PAUSE == 0) {
+                        waitWithProgress(SEARCH_PAUSE_MS, processed, toAdd.size(), progress,
+                                "Пауза, чтобы VK не запросил капчу:");
+                    }
+                }
+            }
+
+            result.added = added;
+            Log.d(TAG, "local import: added=" + result.added + " skipped=" + result.skipped
+                    + " failed=" + result.failed + " notFound=" + result.notFound);
+            callback.onDone(result);
+        } catch (Throwable error) {
+            callback.onError(error);
+        } finally {
+            CaptchaImageLoader.setAutoCancelPlaceholder(false);
+        }
+    }
+
+    private static List<MusicTrack> getMyMusicWithRetry(int total, Progress progress) throws Exception {
+        long wait = CAPTCHA_WAIT_MS;
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return VkPlaylistApi.getMyMusic();
+            } catch (Throwable error) {
+                if (!isCaptchaError(error) || attempt >= CAPTCHA_RETRIES) {
+                    throw error;
+                }
+                waitWithProgress(wait, total, total, progress,
+                        "VK ограничил запросы. Пауза, затем продолжим автоматически:");
+                wait = Math.min(wait * 2, CAPTCHA_WAIT_MAX_MS);
+            }
+        }
+    }
+
+    private static void addToMyMusicWithRetry(
+            MusicTrack track,
+            int done,
+            int total,
+            Progress progress
+    ) throws Exception {
+        long wait = 60_000L;
+        for (int attempt = 0; ; attempt++) {
+            try {
+                VkPlaylistApi.addToMyMusic(track);
+                return;
+            } catch (Throwable error) {
+                if (!isCaptchaError(error) || attempt >= CAPTCHA_RETRIES) {
+                    throw error;
+                }
+                waitWithProgress(wait, done, total, progress,
+                        "VK ограничил добавление трека. Пауза, затем повторим:");
+                wait = Math.min(wait * 2, CAPTCHA_WAIT_MAX_MS);
+            }
+        }
+    }
+
+    private static void waitWithProgress(
+            long waitMs,
+            int done,
+            int total,
+            Progress progress,
+            String message
+    ) throws InterruptedException {
+        long remaining = waitMs;
+        while (remaining > 0) {
+            long seconds = (remaining + 999L) / 1000L;
+            progress.onProgress(done, total, message + " " + seconds + " с");
+            long step = Math.min(1000L, remaining);
+            Thread.sleep(step);
+            remaining -= step;
         }
     }
 
@@ -160,6 +341,7 @@ public final class SpotifyImportService {
             return;
         }
 
+        CaptchaImageLoader.setAutoCancelPlaceholder(true);
         try {
             Result result = new Result();
             result.playlistName = playlistName;
@@ -220,6 +402,8 @@ public final class SpotifyImportService {
             callback.onDone(result);
         } catch (Throwable error) {
             callback.onError(error);
+        } finally {
+            CaptchaImageLoader.setAutoCancelPlaceholder(false);
         }
     }
 
@@ -228,43 +412,211 @@ public final class SpotifyImportService {
             Progress progress,
             Result result
     ) throws Exception {
-        List<Match> matches = new ArrayList<>();
         int total = spotifyTracks.size();
+        Match[] foundMatches = new Match[total];
+        List<Integer> pending = new ArrayList<>();
+
         int done = 0;
-
-        for (SpotifyTrack spotify : spotifyTracks) {
-            done++;
-            if (!spotify.usable()) {
-                result.notFound++;
-                progress.onProgress(done, total, "Пропуск: " + spotify.title);
-                continue;
-            }
-
-            String query = TrackMatcher.query(spotify.artist, spotify.title);
-            List<MusicTrack> found = VkPlaylistApi.search(query, 5);
-            TrackMatcher.Result best = TrackMatcher.pickBest(
-                    found,
-                    spotify.artist,
-                    spotify.title,
-                    spotify.durationSeconds()
-            );
-
-            if (TrackMatcher.acceptable(best)) {
-                matches.add(new Match(spotify, best.track, best.score));
-                result.matched++;
-                if (best.score < 0.80) {
-                    result.approximate++;
-                }
-                progress.onProgress(done, total, spotify.artist + " — " + spotify.title);
+        for (int index = 0; index < total; index++) {
+            SpotifyTrack spotify = spotifyTracks.get(index);
+            if (spotify.usable()) {
+                pending.add(index);
             } else {
                 result.notFound++;
-                progress.onProgress(done, total, "Не найдено: " + spotify.artist + " — " + spotify.title);
+                result.notFoundTracks.add(label(spotify));
+                done++;
+                progress.onProgress(done, total, "Пропуск: " + spotify.title);
             }
-
-            Thread.sleep(SEARCH_DELAY_MS);
         }
 
+        int searchesSincePause = 0;
+        for (int start = 0; start < pending.size(); start += MATCH_BATCH) {
+            int end = Math.min(start + MATCH_BATCH, pending.size());
+            List<Integer> chunk = pending.subList(start, end);
+
+            List<String> queries = new ArrayList<>(chunk.size());
+            for (Integer index : chunk) {
+                SpotifyTrack spotify = spotifyTracks.get(index);
+                queries.add(TrackMatcher.query(spotify.artist, spotify.title));
+            }
+
+            searchesSincePause = pauseIfNeeded(searchesSincePause, queries.size(), done, total, progress);
+            List<List<MusicTrack>> found = searchWithCaptchaRetry(queries, done, total, progress);
+            searchesSincePause += queries.size();
+            List<Integer> misses = new ArrayList<>();
+
+            for (int position = 0; position < chunk.size(); position++) {
+                int index = chunk.get(position);
+                SpotifyTrack spotify = spotifyTracks.get(index);
+                List<MusicTrack> tracks = position < found.size() ? found.get(position) : null;
+                TrackMatcher.Result best = TrackMatcher.pickBest(
+                        tracks,
+                        spotify.artist,
+                        spotify.title,
+                        spotify.durationSeconds()
+                );
+                if (TrackMatcher.acceptable(best)) {
+                    foundMatches[index] = new Match(spotify, best.track, best.score);
+                } else {
+                    misses.add(index);
+                }
+            }
+
+            if (!misses.isEmpty()) {
+                List<Integer> fallbackIndexes = new ArrayList<>(misses.size());
+                List<String> fallbackQueries = new ArrayList<>(misses.size());
+                for (Integer index : misses) {
+                    SpotifyTrack spotify = spotifyTracks.get(index);
+                    String primary = TrackMatcher.query(spotify.artist, spotify.title);
+                    String fallback = TrackMatcher.titleQuery(spotify.title);
+                    if (!fallback.isEmpty() && !fallback.equals(primary)) {
+                        fallbackIndexes.add(index);
+                        fallbackQueries.add(fallback);
+                    }
+                }
+
+                if (!fallbackQueries.isEmpty()) {
+                    searchesSincePause = pauseIfNeeded(
+                            searchesSincePause,
+                            fallbackQueries.size(),
+                            done,
+                            total,
+                            progress
+                    );
+                    List<List<MusicTrack>> fallback = searchWithCaptchaRetry(
+                            fallbackQueries,
+                            done,
+                            total,
+                            progress
+                    );
+                    searchesSincePause += fallbackQueries.size();
+                    for (int position = 0; position < fallbackIndexes.size(); position++) {
+                        int index = fallbackIndexes.get(position);
+                        SpotifyTrack spotify = spotifyTracks.get(index);
+                        List<MusicTrack> tracks = position < fallback.size() ? fallback.get(position) : null;
+                        TrackMatcher.Result best = TrackMatcher.pickBest(
+                                tracks,
+                                spotify.artist,
+                                spotify.title,
+                                spotify.durationSeconds()
+                        );
+                        if (TrackMatcher.acceptable(best)) {
+                            foundMatches[index] = new Match(spotify, best.track, best.score);
+                        }
+                    }
+                }
+            }
+
+            for (Integer index : chunk) {
+                SpotifyTrack spotify = spotifyTracks.get(index);
+                Match match = foundMatches[index];
+                done++;
+                if (match != null) {
+                    result.matched++;
+                    if (match.score < 0.80) {
+                        result.approximate++;
+                    }
+                    progress.onProgress(done, total, spotify.artist + " — " + spotify.title);
+                } else {
+                    result.notFound++;
+                    result.notFoundTracks.add(label(spotify));
+                    progress.onProgress(done, total, "Не найдено: " + spotify.artist + " — " + spotify.title);
+                }
+            }
+
+            if (end < pending.size()) {
+                Thread.sleep(BATCH_DELAY_MS);
+            }
+        }
+
+        List<Match> matches = new ArrayList<>(result.matched);
+        for (Match match : foundMatches) {
+            if (match != null) {
+                matches.add(match);
+            }
+        }
         return matches;
+    }
+
+    private static List<List<MusicTrack>> searchWithCaptchaRetry(
+            List<String> queries,
+            int done,
+            int total,
+            Progress progress
+    ) throws Exception {
+        long wait = CAPTCHA_WAIT_MS;
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return VkPlaylistApi.searchBatch(queries, SEARCH_COUNT);
+            } catch (Throwable error) {
+                if (!isCaptchaError(error) || attempt >= CAPTCHA_RETRIES) {
+                    throw error;
+                }
+
+                long remaining = wait;
+                while (remaining > 0) {
+                    long seconds = (remaining + 999L) / 1000L;
+                    progress.onProgress(done, total,
+                            "VK ограничил поиск. Пауза " + seconds + " с, затем продолжим автоматически");
+                    long step = Math.min(1000L, remaining);
+                    Thread.sleep(step);
+                    remaining -= step;
+                }
+                wait = Math.min(wait * 2, CAPTCHA_WAIT_MAX_MS);
+            }
+        }
+    }
+
+    private static boolean isCaptchaError(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof VKApiExecutionException
+                    && ((VKApiExecutionException) current).d() == 14) {
+                return true;
+            }
+            String message = current.getMessage();
+            if (message != null && (message.contains("Can't confirm validation")
+                    || message.contains("Captcha needed"))) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private static int pauseIfNeeded(
+            int searchesSincePause,
+            int plannedSearches,
+            int done,
+            int total,
+            Progress progress
+    ) throws InterruptedException {
+        if (plannedSearches <= 0
+                || searchesSincePause == 0
+                || searchesSincePause + plannedSearches <= SEARCHES_BEFORE_PAUSE) {
+            return searchesSincePause;
+        }
+
+        long remaining = SEARCH_PAUSE_MS;
+        while (remaining > 0) {
+            long seconds = (remaining + 999L) / 1000L;
+            progress.onProgress(done, total,
+                    "Пауза " + seconds + " с: VK ограничивает поиск, чтобы не запросить капчу");
+            long step = Math.min(1000L, remaining);
+            Thread.sleep(step);
+            remaining -= step;
+        }
+        return 0;
+    }
+
+    private static String label(SpotifyTrack track) {
+        if (track == null) {
+            return "";
+        }
+        if (track.artist == null || track.artist.isEmpty()) {
+            return track.title == null ? "" : track.title;
+        }
+        return track.artist + " — " + track.title;
     }
 
     private static List<MusicTrack> toTracks(List<Match> matches) {

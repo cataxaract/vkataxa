@@ -7,12 +7,20 @@ import java.util.stream.Collectors;
 
 public class MusicTrackUtils {
     public static String getArtists(MusicTrack musicTrack) {
-        return (musicTrack.L == null || musicTrack.I == null
-                ? normalizeMetadata(musicTrack.C)
-                : normalizeMetadata(musicTrack.L.stream().map(Artist::w1).collect(Collectors.joining(", "))));
+        String artists = null;
+        if (musicTrack.L != null && !musicTrack.L.isEmpty()) {
+            artists = musicTrack.L.stream()
+                    .map(Artist::w1)
+                    .filter(value -> value != null && !value.isEmpty())
+                    .collect(Collectors.joining(", "));
+        }
+        if (artists == null || artists.isEmpty()) {
+            artists = musicTrack.C;
+        }
+        return normalizeMetadata(artists);
     }
 
     private static String normalizeMetadata(String in) {
-        return in.replaceAll("[\\\\/:*?\"<>|]", "");
+        return in == null ? "" : in.replaceAll("[\\\\/:*?\"<>|]", "");
     }
 }

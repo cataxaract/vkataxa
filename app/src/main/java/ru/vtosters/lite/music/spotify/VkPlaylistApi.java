@@ -1,5 +1,8 @@
 package ru.vtosters.lite.music.spotify;
 
+import android.util.Log;
+
+import com.vk.api.audio.AudioAdd;
 import com.vk.api.audio.AudioAddToPlaylist;
 import com.vk.api.audio.AudioDeletePlaylist;
 import com.vk.api.audio.AudioGet;
@@ -7,9 +10,14 @@ import com.vk.api.audio.AudioRemoveFromPlaylist;
 import com.vk.api.audio.AudioSavePlaylist;
 import com.vk.api.audio.AudioSearch;
 import com.vk.api.base.ApiCallback;
+import com.vk.api.base.ApiConfig;
 import com.vk.api.sdk.exceptions.VKApiExecutionException;
+import com.vk.api.sdk.o.VKRequest;
 import com.vk.dto.music.MusicTrack;
 import com.vk.dto.music.Playlist;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -20,8 +28,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import ru.vtosters.lite.utils.AccountManagerUtils;
 
 final class VkPlaylistApi {
+    private static final String TAG = "VKataxaImport";
     private static final int PAGE = 100;
     private static final int ADD_CHUNK = 50;
+    private static final int SEARCH_BATCH = 10;
 
     private VkPlaylistApi() {
     }
@@ -54,6 +64,112 @@ final class VkPlaylistApi {
         await(latch, error);
         List<MusicTrack> tracks = result.get();
         return tracks == null ? new ArrayList<>() : tracks;
+    }
+
+    static List<List<MusicTrack>> searchBatch(List<String> queries, int count) throws Exception {
+        List<List<MusicTrack>> results = new ArrayList<>();
+        for (int start = 0; start < queries.size(); start += SEARCH_BATCH) {
+            int end = Math.min(start + SEARCH_BATCH, queries.size());
+            List<String> chunk = queries.subList(start, end);
+            List<List<MusicTrack>> batch = executeSearch(chunk, count);
+            if (batch != null && batch.size() == chunk.size()) {
+                results.addAll(batch);
+                continue;
+            }
+            for (String query : chunk) {
+                try {
+                    results.add(search(query, count));
+                } catch (VKApiExecutionException error) {
+                    if (error.d() == 14) {
+                        throw error;
+                    }
+                    results.add(new ArrayList<>());
+                } catch (Exception error) {
+                    if (isCaptchaFailure(error)) {
+                        throw error;
+                    }
+                    results.add(new ArrayList<>());
+                } catch (Throwable ignored) {
+                    results.add(new ArrayList<>());
+                }
+                Thread.sleep(120L);
+            }
+        }
+        return results;
+    }
+
+    private static boolean isCaptchaFailure(Throwable error) {
+        String message = error == null ? null : error.getMessage();
+        return message != null && message.contains("Can't confirm validation");
+    }
+
+    private static List<List<MusicTrack>> executeSearch(List<String> queries, int count) throws Exception {
+        try {
+            StringBuilder code = new StringBuilder("var r=[];");
+            for (String query : queries) {
+                JSONObject params = new JSONObject();
+                params.put("q", query);
+                params.put("count", count);
+                params.put("search_own", 0);
+                params.put("performer_only", 0);
+                params.put("offset", 0);
+                code.append("r.push(API.audio.search(").append(params).append("));");
+            }
+            code.append("return r;");
+
+            VKRequest<JSONObject> request = new VKRequest<>("execute");
+            request.a("code", code.toString());
+            JSONObject root = request.a(ApiConfig.e);
+            JSONArray responses = root == null ? null : root.optJSONArray("response");
+            if (responses == null || responses.length() != queries.size()) {
+                return null;
+            }
+
+            List<List<MusicTrack>> results = new ArrayList<>();
+            for (int i = 0; i < responses.length(); i++) {
+                JSONObject item = responses.optJSONObject(i);
+                if (item == null || item.has("error") || item.has("error_code")) {
+                    return null;
+                }
+                JSONArray items = item.optJSONArray("items");
+                if (items == null) {
+                    items = item.optJSONArray("audios");
+                }
+                List<MusicTrack> tracks = new ArrayList<>();
+                if (items != null) {
+                    for (int j = 0; j < items.length(); j++) {
+                        JSONObject raw = items.optJSONObject(j);
+                        if (raw == null) {
+                            continue;
+                        }
+                        try {
+                            MusicTrack track = MusicTrack.W.a(raw);
+                            if (track != null) {
+                                tracks.add(track);
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                }
+                results.add(tracks);
+            }
+            return results;
+        } catch (VKApiExecutionException error) {
+            Log.d(TAG, "execute failed code=" + error.d() + " msg=" + error.getMessage());
+            if (error.d() == 14) {
+                throw error;
+            }
+            return null;
+        } catch (Exception error) {
+            Log.d(TAG, "execute failed: " + error);
+            if (isCaptchaFailure(error)) {
+                throw error;
+            }
+            return null;
+        } catch (Throwable error) {
+            Log.d(TAG, "execute crashed: " + error);
+            return null;
+        }
     }
 
     static Playlist createPlaylist(int ownerId, String title, String description, List<MusicTrack> initial) throws Exception {
@@ -218,11 +334,81 @@ final class VkPlaylistApi {
         return result;
     }
 
+    static List<MusicTrack> getMyMusic() throws Exception {
+        List<MusicTrack> result = new ArrayList<>();
+        int count = 100;
+        for (int offset = 0; offset < 20000; offset += count) {
+            List<MusicTrack> page = getMyMusicPage(count, offset);
+            if (page.isEmpty()) {
+                break;
+            }
+            result.addAll(page);
+            if (page.size() < count) {
+                break;
+            }
+            Thread.sleep(200L);
+        }
+        return result;
+    }
+
+    private static List<MusicTrack> getMyMusicPage(int count, int offset) throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<List<MusicTrack>> page = new AtomicReference<>();
+        AtomicReference<Throwable> error = new AtomicReference<>();
+
+        new AudioGet(currentUserId())
+                .b(count)
+                .c(offset)
+                .a(new ApiCallback<List<MusicTrack>>() {
+                    @Override
+                    public void a(List<MusicTrack> tracks) {
+                        page.set(tracks);
+                        latch.countDown();
+                    }
+
+                    @Override
+                    public void a(VKApiExecutionException e) {
+                        error.set(e);
+                        latch.countDown();
+                    }
+                })
+                .a();
+
+        await(latch, error);
+        List<MusicTrack> tracks = page.get();
+        return tracks == null ? new ArrayList<>() : tracks;
+    }
+
+    static void addToMyMusic(MusicTrack track) throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Throwable> error = new AtomicReference<>();
+
+        new AudioAdd(track, null)
+                .a(new ApiCallback<Integer>() {
+                    @Override
+                    public void a(Integer result) {
+                        latch.countDown();
+                    }
+
+                    @Override
+                    public void a(VKApiExecutionException e) {
+                        error.set(e);
+                        latch.countDown();
+                    }
+                })
+                .a();
+
+        await(latch, error);
+    }
+
     private static void await(CountDownLatch latch, AtomicReference<Throwable> error) throws Exception {
         if (!latch.await(30, TimeUnit.SECONDS)) {
             throw new IllegalStateException("VK API timeout");
         }
         Throwable throwable = error.get();
+        if (throwable instanceof VKApiExecutionException) {
+            throw (VKApiExecutionException) throwable;
+        }
         if (throwable != null) {
             throw new IllegalStateException(throwable);
         }

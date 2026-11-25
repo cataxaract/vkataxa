@@ -1,7 +1,9 @@
 package ru.vtosters.lite.music.spotify;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -26,11 +28,14 @@ import android.widget.Toast;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.browser.customtabs.CustomTabsIntent;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import com.facebook.drawee.generic.GenericDraweeHierarchy;
 import com.facebook.drawee.generic.RoundingParams;
 import com.facebook.drawee.view.SimpleDraweeView;
 
+import java.io.File;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -45,6 +50,7 @@ import ru.vtosters.lite.utils.AndroidUtils;
 
 public class SpotifyImportActivity extends AppCompatActivity {
     private static final int REQ_CSV = 7101;
+    private static final int REQ_STORAGE = 7102;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -105,6 +111,19 @@ public class SpotifyImportActivity extends AppCompatActivity {
                 });
             }
         });
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQ_STORAGE) {
+            return;
+        }
+        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            scanLocalMusic();
+        } else {
+            Toast.makeText(this, "Нужен доступ к файлам, чтобы найти музыку", Toast.LENGTH_LONG).show();
+        }
     }
 
     @Override
@@ -485,6 +504,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
         ));
+        content.addView(localMusicCard());
 
         List<SpotifySyncStore.Entry> entries = SpotifySyncStore.all(this);
         boolean hasCsv = false;
@@ -545,6 +565,159 @@ public class SpotifyImportActivity extends AppCompatActivity {
                 dp(44)
         ));
         return card;
+    }
+
+    private View localMusicCard() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(18), dp(18), dp(18), dp(18));
+        card.setBackground(rounded(
+                cardBackground(),
+                withAlpha(accent(), 45),
+                20
+        ));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        params.setMargins(0, dp(12), 0, 0);
+        card.setLayoutParams(params);
+
+        TextView mark = text("ЛОКАЛЬНАЯ МУЗЫКА", 10, accent(), true);
+        mark.setLetterSpacing(0.12f);
+        card.addView(mark);
+
+        TextView title = text("Импорт из Music/spotify", 22, text(), true);
+        title.setPadding(0, dp(5), 0, dp(6));
+        card.addView(title);
+
+        TextView description = text(
+                "Найдёт аудиофайлы в папке Music/spotify, сопоставит их с VK "
+                        + "и добавит в «Мою музыку». Можно выбрать только новые треки или все.",
+                12,
+                secondaryText(),
+                false
+        );
+        description.setPadding(0, 0, 0, dp(14));
+        card.addView(description);
+
+        TextView choose = button("Добавить в «Мою музыку»");
+        choose.setOnClickListener(v -> startLocalImport());
+        card.addView(choose, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(44)
+        ));
+        return card;
+    }
+
+    private void startLocalImport() {
+        if (running) {
+            Toast.makeText(this, "Дождитесь завершения операции", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                    this,
+                    new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
+                    REQ_STORAGE
+            );
+            return;
+        }
+        scanLocalMusic();
+    }
+
+    private void scanLocalMusic() {
+        if (running) {
+            return;
+        }
+        running = true;
+        showProgress("Ищем аудиофайлы...");
+
+        executor.execute(() -> {
+            try {
+                File folder = LocalMusicScanner.defaultFolder();
+                List<SpotifyTrack> tracks = LocalMusicScanner.scan(this, folder);
+                main.post(() -> {
+                    if (tracks.isEmpty()) {
+                        running = false;
+                        hideProgress();
+                        Toast.makeText(
+                                this,
+                                "В папке " + folder.getAbsolutePath() + " нет аудиофайлов",
+                                Toast.LENGTH_LONG
+                        ).show();
+                        return;
+                    }
+                    hideProgress();
+                    showLocalImportDialog(tracks);
+                });
+            } catch (Throwable error) {
+                main.post(() -> {
+                    running = false;
+                    hideProgress();
+                    Toast.makeText(this, "Ошибка сканирования: " + message(error), Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private void showLocalImportDialog(List<SpotifyTrack> tracks) {
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Импорт из Music/spotify")
+                .setMessage("Найдено " + tracks.size()
+                        + " аудиофайлов. Добавить в «Мою музыку» только новые треки или все?")
+                .setPositiveButton("Только новые", (d, which) -> runLocalImport(tracks, true))
+                .setNeutralButton("Все треки", (d, which) -> runLocalImport(tracks, false))
+                .setNegativeButton("Отмена", (d, which) -> running = false)
+                .create();
+        dialog.setOnCancelListener(d -> running = false);
+        dialog.show();
+    }
+
+    private void runLocalImport(List<SpotifyTrack> tracks, boolean onlyNew) {
+        showProgress("Ищем треки в VK...");
+
+        SpotifyImportService.Progress progressCallback = (done, total, message) -> main.post(() -> {
+            if (total > 0) {
+                progress.setProgress((int) (1000f * done / total));
+            }
+            status.setText(message);
+        });
+
+        SpotifyImportService.Callback callback = new SpotifyImportService.Callback() {
+            @Override
+            public void onDone(SpotifyImportService.Result result) {
+                main.post(() -> {
+                    running = false;
+                    hideProgress();
+                    Toast.makeText(SpotifyImportActivity.this, result.summary(), Toast.LENGTH_LONG).show();
+                    showNotFound(result);
+                    afterImport();
+                });
+            }
+
+            @Override
+            public void onError(Throwable error) {
+                main.post(() -> {
+                    running = false;
+                    hideProgress();
+                    Toast.makeText(
+                            SpotifyImportActivity.this,
+                            "Ошибка: " + message(error),
+                            Toast.LENGTH_LONG
+                    ).show();
+                });
+            }
+        };
+
+        executor.execute(() -> SpotifyImportService.importLocalMusic(
+                this,
+                tracks,
+                onlyNew,
+                progressCallback,
+                callback
+        ));
     }
 
     private View csvRow(SpotifySyncStore.Entry entry) {
@@ -694,6 +867,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
                     running = false;
                     hideProgress();
                     Toast.makeText(SpotifyImportActivity.this, result.summary(), Toast.LENGTH_LONG).show();
+                    showNotFound(result);
                     afterImport();
                 });
             }
@@ -719,6 +893,32 @@ public class SpotifyImportActivity extends AppCompatActivity {
                 SpotifyImportService.importTracks(this, finalKey, finalName, parsed.tracks, progressCallback, callback);
             }
         });
+    }
+
+    private void showNotFound(SpotifyImportService.Result result) {
+        if (result == null || result.notFoundTracks.isEmpty()) {
+            return;
+        }
+
+        StringBuilder builder = new StringBuilder();
+        int limit = Math.min(result.notFoundTracks.size(), 100);
+        for (int i = 0; i < limit; i++) {
+            builder.append("• ").append(result.notFoundTracks.get(i)).append('\n');
+        }
+        if (result.notFoundTracks.size() > limit) {
+            builder.append("… и ещё ").append(result.notFoundTracks.size() - limit).append('\n');
+        }
+
+        TextView body = text(builder.toString().trim(), 13, text(), false);
+        body.setPadding(dp(20), dp(8), dp(20), dp(8));
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(body);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Не найдено: " + result.notFoundTracks.size())
+                .setView(scroll)
+                .setPositiveButton("ОК", null)
+                .show();
     }
 
     private void afterImport() {
@@ -769,6 +969,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
                     running = false;
                     hideProgress();
                     Toast.makeText(SpotifyImportActivity.this, result.summary(), Toast.LENGTH_LONG).show();
+                    showNotFound(result);
                     afterImport();
                 });
             }
@@ -895,6 +1096,9 @@ public class SpotifyImportActivity extends AppCompatActivity {
         if (message.contains("Active premium subscription required")) {
             return "Spotify требует Premium у владельца приложения. "
                     + "Создайте приложение под Premium-аккаунтом или оформите Premium и повторите.";
+        }
+        if (message.contains("Can't confirm validation") || message.contains("Captcha needed")) {
+            return "Не удалось подтвердить, что вы не робот. Повторите импорт и введите код с картинки.";
         }
         return message;
     }
