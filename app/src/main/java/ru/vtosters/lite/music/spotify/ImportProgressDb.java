@@ -296,12 +296,13 @@ final class ImportProgressDb extends SQLiteOpenHelper {
 
     List<PausedJob> paused(int account) {
         List<PausedJob> result = new ArrayList<>();
+        long cutoff = System.currentTimeMillis() - 30L * 24 * 60 * 60 * 1000;
         try (Cursor cursor = getReadableDatabase().query(
                 TABLE_JOBS,
                 new String[]{"key", "status", "target_owner", "target_playlist"},
-                "account = ? AND status LIKE 'paused%'",
-                new String[]{String.valueOf(account)},
-                null, null, "updated_at DESC")) {
+                "account = ? AND status LIKE 'paused%' AND updated_at >= ?",
+                new String[]{String.valueOf(account), String.valueOf(cutoff)},
+                null, null, "updated_at DESC", "20")) {
             while (cursor.moveToNext()) {
                 String key = cursor.getString(0);
                 result.add(new PausedJob(

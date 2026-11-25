@@ -27,6 +27,9 @@ public final class LocalMusicScanner {
 
     public static File defaultFolder() {
         File music = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC);
+        if (music.isDirectory()) {
+            return music;
+        }
         File lower = new File(music, "spotify");
         if (lower.isDirectory()) {
             return lower;
@@ -39,9 +42,10 @@ public final class LocalMusicScanner {
     }
 
     public static List<SpotifyTrack> scan(Context context, File folder) {
-        List<SpotifyTrack> result = scanMediaStore(context);
-        if (!result.isEmpty()) {
-            return result;
+        // MediaStore covers Music/ and Download/ and is much faster than reading every file's tags.
+        List<SpotifyTrack> media = scanMediaStore(context);
+        if (!media.isEmpty()) {
+            return media;
         }
         return scanFiles(folder);
     }
@@ -64,8 +68,9 @@ public final class LocalMusicScanner {
                     MediaStore.Audio.Media.DURATION,
                     MediaStore.Audio.Media.DISPLAY_NAME
             };
-            selection = MediaStore.Audio.Media.RELATIVE_PATH + " LIKE ?";
-            args = new String[]{"Music/spotify/%"};
+            selection = "(" + MediaStore.Audio.Media.RELATIVE_PATH + " LIKE ? OR "
+                    + MediaStore.Audio.Media.RELATIVE_PATH + " LIKE ?)";
+            args = new String[]{"Music/%", "Download/%"};
         } else {
             projection = new String[]{
                     MediaStore.Audio.Media._ID,
@@ -74,8 +79,9 @@ public final class LocalMusicScanner {
                     MediaStore.Audio.Media.DURATION,
                     MediaStore.Audio.Media.DISPLAY_NAME
             };
-            selection = MediaStore.Audio.Media.DATA + " LIKE ?";
-            args = new String[]{"%/Music/spotify/%"};
+            selection = "(" + MediaStore.Audio.Media.DATA + " LIKE ? OR "
+                    + MediaStore.Audio.Media.DATA + " LIKE ?)";
+            args = new String[]{"%/Music/%", "%/Download/%"};
         }
 
         try (Cursor cursor = context.getContentResolver().query(uri, projection, selection, args, null)) {

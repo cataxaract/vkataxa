@@ -602,13 +602,13 @@ public class SpotifyImportActivity extends AppCompatActivity {
         mark.setLetterSpacing(0.12f);
         card.addView(mark);
 
-        TextView title = text("Импорт из Music/spotify", 22, text(), true);
+        TextView title = text("Импорт локальной музыки", 22, text(), true);
         title.setPadding(0, dp(5), 0, dp(6));
         card.addView(title);
 
         TextView description = text(
-                "Найдёт аудиофайлы в папке Music/spotify, сопоставит их с VK "
-                        + "и добавит в «Мою музыку». Можно выбрать только новые треки или все.",
+                "Найдёт аудиофайлы в Music/ и Download/, сопоставит их с VK "
+                        + "и добавит найденное в «Мою музыку» без дублей.",
                 12,
                 secondaryText(),
                 false
@@ -679,11 +679,10 @@ public class SpotifyImportActivity extends AppCompatActivity {
 
     private void showLocalImportDialog(List<SpotifyTrack> tracks) {
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("Импорт из Music/spotify")
+                .setTitle("Импорт локальной музыки")
                 .setMessage("Найдено " + tracks.size()
-                        + " аудиофайлов. Добавить в «Мою музыку» только новые треки или все?")
-                .setPositiveButton("Только новые", (d, which) -> runLocalImport(tracks, true))
-                .setNeutralButton("Все треки", (d, which) -> runLocalImport(tracks, false))
+                        + " аудиофайлов в Music/ и Download/. Добавить найденные треки в «Мою музыку»?")
+                .setPositiveButton("Импортировать", (d, which) -> runLocalImport(tracks, true))
                 .setNegativeButton("Отмена", (d, which) -> running = false)
                 .create();
         dialog.setOnCancelListener(d -> running = false);
