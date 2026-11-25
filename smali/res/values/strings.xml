@@ -2043,7 +2043,7 @@ for any occasion"</string>
     <string name="music_menu_playlist_share">Share</string>
     <string name="music_menu_playlist_unfollow">Remove from my music</string>
     <string name="music_my_music_empty_text">There are no tracks in your music</string>
-    <string name="music_my_playlist">My playlist</string>
+    <string name="music_my_playlist">Liked</string>
     <string name="music_new_options_table_header_free">Free</string>
     <string name="music_new_options_table_header_paid">Subscription</string>
     <string name="music_new_options_toolbar_title">New terms</string>

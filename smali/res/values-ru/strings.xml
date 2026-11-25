@@ -1972,7 +1972,7 @@
     <string name="music_menu_playlist_share">Поделиться</string>
     <string name="music_menu_playlist_unfollow">Убрать из моей музыки</string>
     <string name="music_my_music_empty_text">В Вашей музыке ещё нет аудиозаписей</string>
-    <string name="music_my_playlist">Мой плейлист</string>
+    <string name="music_my_playlist">Понравившиеся</string>
     <string name="music_new_options_table_header_free">Бесплатно</string>
     <string name="music_new_options_table_header_paid">Подписка</string>
     <string name="music_new_options_toolbar_title">Новые условия</string>
