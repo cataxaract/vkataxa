@@ -1,3 +1,33 @@
+## v1.1.1
+
+### Added
+- Music data facade `MusicRepository` over the existing cache and VK API: music settings, cached tracks, playlist data, track menu state and artist/playlist screens now read through one repository without visual changes.
+- Account-scoped local like index (`music_likes.db`): local "liked" state survives restarts, `audio.get` is refreshed with a 15-minute TTL, and `audio.add` is deduplicated before the request.
+- Bulk music operations behind `music_bulk`: long-press to select tracks, then add to a playlist, remove from "My music", download or cache. The queue uses 3 workers, a shared rate limiter, progress, cancel and captcha stop.
+- Persistent import journal (`music_import.db`): target playlist, matched/missed/added tracks, resume after a captcha stop or app restart, and a paused-jobs dialog with "Continue", "Retry not found" and "Forget".
+- Incremental import: CSV/Spotify and local imports add matched batches as soon as they are found; local import can target "My music", an existing playlist or a new playlist.
+- Local import now scans `Music/` and `Download/`, including tracks downloaded by the mod.
+- Conservative import budget: 60 additions per rolling hour, with a paused status instead of a flood-control retry.
+
+### Changed
+- Import no longer uses fixed `Thread.sleep` batches or automatic captcha retries: requests use the shared `RateLimiter`, `error 9` pauses the queue and `error 14` stops it with saved progress.
+- The local import card is now "Импорт локальной музыки"; the misleading "only new / all tracks" choice was removed because existing tracks are always deduplicated.
+- A 100-track import can span more than one hourly budget window.
+
+### Fixed
+- Downloaded tracks were missed because the local scanner only looked at `Music/spotify`; it now uses `Music/%` and `Download/%`.
+- Opening the import progress screen could crash on Android 16 because of a `PRAGMA busy_timeout` executed in `onConfigure`; the pragma was removed while keeping WAL.
+- Partial import chunks could be added twice after a restart; imports now write `add_intent`, reconcile the target and skip existing/added tracks.
+- Paused jobs older than 30 days are hidden and the list is capped; stale jobs no longer clutter the resume dialog.
+
+### Known limitations
+- VK captcha (error 14) still cannot be solved in this client. Imports stop honestly and keep their progress, but a very large import must be continued later.
+- The hourly budget is intentionally conservative; 100 tracks may require more than one window.
+- Local import scans all of `Music/` and `Download/`, so unrelated audio files may appear in the list.
+- Local import to a playlist is not incremental yet (it adds after matching); "My music" and CSV/Spotify paths are incremental.
+- `v` API was not bumped: `ApiRequest.a(int)` could not be confirmed as the version setter. LibVKX has no add/import API, so VKX cannot be used as the import transport.
+- The 100-track acceptance run (kill between chunks, error 9/14) was not completed because it needs a controlled test playlist; bulk-operation acceptance is also still partial.
+
 ## v1.1.0
 
 ### Added
