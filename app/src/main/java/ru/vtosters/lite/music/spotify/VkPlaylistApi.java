@@ -237,15 +237,29 @@ final class VkPlaylistApi {
         await(latch, error);
     }
 
+    interface ChunkListener {
+        void onChunkAdded(List<MusicTrack> chunk);
+    }
+
     static void addTracks(int ownerId, int playlistId, List<MusicTrack> tracks) throws Exception {
+        addTracks(ownerId, playlistId, tracks, null);
+    }
+
+    static void addTracks(
+            int ownerId,
+            int playlistId,
+            List<MusicTrack> tracks,
+            ChunkListener listener
+    ) throws Exception {
         for (int start = 0; start < tracks.size(); start += ADD_CHUNK) {
             int end = Math.min(start + ADD_CHUNK, tracks.size());
+            List<MusicTrack> chunk = new ArrayList<>(tracks.subList(start, end));
             LIMITER.acquire();
             AudioAddToPlaylist.b builder = new AudioAddToPlaylist.b()
                     .a(ownerId)
                     .b(playlistId);
-            for (int i = start; i < end; i++) {
-                builder.a(tracks.get(i));
+            for (MusicTrack track : chunk) {
+                builder.a(track);
             }
 
             CountDownLatch latch = new CountDownLatch(1);
@@ -265,6 +279,9 @@ final class VkPlaylistApi {
             }).a();
 
             await(latch, error);
+            if (listener != null) {
+                listener.onChunkAdded(chunk);
+            }
         }
     }
 

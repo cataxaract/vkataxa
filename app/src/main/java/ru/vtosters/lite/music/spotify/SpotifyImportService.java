@@ -135,38 +135,59 @@ public final class SpotifyImportService {
             }
 
             List<MusicTrack> vkTracks = toTracks(matches);
-            Playlist created = VkPlaylistApi.createPlaylist(
-                    ownerId,
-                    playlistName,
-                    "Импортировано из Spotify",
-                    new ArrayList<>()
-            );
+            ImportProgressDb progressDb = new ImportProgressDb(context);
+            ImportProgressDb.Job saved = progressDb.get(ownerId, key);
+            int targetPlaylist;
+            if (saved != null && saved.playlistId != 0) {
+                ownerId = saved.ownerId;
+                targetPlaylist = saved.playlistId;
+                result.created = false;
+            } else {
+                Playlist created = VkPlaylistApi.createPlaylist(
+                        ownerId,
+                        playlistName,
+                        "Импортировано из Spotify",
+                        new ArrayList<>()
+                );
+                targetPlaylist = created.a;
+                progressDb.saveTarget(ownerId, key, ownerId, targetPlaylist, "adding");
+                result.created = true;
+            }
 
-            try {
-                VkPlaylistApi.addTracks(ownerId, created.a, vkTracks);
-            } catch (Throwable addError) {
-                try {
-                    VkPlaylistApi.deletePlaylist(ownerId, created.a);
-                } catch (Throwable ignored) {
+            final int targetOwner = ownerId;
+            Set<String> alreadyAdded = progressDb.added(targetOwner, key);
+            List<MusicTrack> toAdd = new ArrayList<>();
+            for (MusicTrack track : vkTracks) {
+                if (!alreadyAdded.contains(track.y1())) {
+                    toAdd.add(track);
                 }
-                throw addError;
+            }
+
+            if (!toAdd.isEmpty()) {
+                progressDb.setStatus(targetOwner, key, "adding");
+                VkPlaylistApi.addTracks(targetOwner, targetPlaylist, toAdd, chunk -> {
+                    for (MusicTrack track : chunk) {
+                        progressDb.markAdded(targetOwner, key, track.y1());
+                    }
+                });
             }
 
             SpotifySyncStore.Entry entry = new SpotifySyncStore.Entry();
             entry.spotifyId = key;
             entry.name = playlistName;
-            entry.vkOwnerId = ownerId;
-            entry.vkPlaylistId = created.a;
+            entry.vkOwnerId = targetOwner;
+            entry.vkPlaylistId = targetPlaylist;
             entry.lastSync = System.currentTimeMillis();
             for (Match match : matches) {
                 entry.tracks.put(match.spotify.id, match.track.y1());
             }
             SpotifySyncStore.put(context, entry);
+            progressDb.clear(targetOwner, key);
 
-            result.created = true;
-            result.ownerId = ownerId;
-            result.playlistId = created.a;
-            result.added = vkTracks.size();
+            result.ownerId = targetOwner;
+            result.playlistId = targetPlaylist;
+            result.added = toAdd.size();
+            result.skipped = vkTracks.size() - toAdd.size();
             callback.onDone(result);
         } catch (Throwable error) {
             logImportError("import", error);
@@ -187,6 +208,10 @@ public final class SpotifyImportService {
         try {
             Result result = new Result();
             result.localImport = true;
+            int account = VkPlaylistApi.currentUserId();
+            ImportProgressDb progressDb = new ImportProgressDb(context);
+            Set<String> alreadyAdded = progressDb.added(account, "local");
+            progressDb.saveTarget(account, "local", account, 0, "adding");
 
             progress.onProgress(0, localTracks.size(), "Сверяем с «Моей музыкой»...");
             List<MusicTrack> myMusic = VkPlaylistApi.getMyMusic();
@@ -226,7 +251,8 @@ public final class SpotifyImportService {
 
             List<MusicTrack> toAdd = new ArrayList<>();
             for (Match match : matches) {
-                if (onlyNew && existing.contains(match.track.y1())) {
+                String uid = match.track.y1();
+                if ((onlyNew && existing.contains(uid)) || alreadyAdded.contains(uid)) {
                     result.skipped++;
                 } else {
                     toAdd.add(match.track);
@@ -240,6 +266,7 @@ public final class SpotifyImportService {
                         "Добавляем в «Мою музыку»: " + MusicTrackUtils.getArtists(track) + " — " + track.f);
                 try {
                     VkPlaylistApi.addToMyMusic(track);
+                    progressDb.markAdded(account, "local", track.y1());
                     added++;
                 } catch (Throwable error) {
                     if (isCaptchaError(error)) {
@@ -253,6 +280,7 @@ public final class SpotifyImportService {
             result.added = added;
             Log.d(TAG, "local import: added=" + result.added + " skipped=" + result.skipped
                     + " failed=" + result.failed + " notFound=" + result.notFound);
+            progressDb.clear(account, "local");
             callback.onDone(result);
         } catch (Throwable error) {
             logImportError("local", error);
