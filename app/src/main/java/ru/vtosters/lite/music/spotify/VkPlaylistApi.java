@@ -25,6 +25,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import ru.vtosters.lite.core.net.RateLimiter;
 import ru.vtosters.lite.utils.AccountManagerUtils;
 
 final class VkPlaylistApi {
@@ -32,6 +33,7 @@ final class VkPlaylistApi {
     private static final int PAGE = 100;
     private static final int ADD_CHUNK = 50;
     private static final int SEARCH_BATCH = 10;
+    private static final RateLimiter LIMITER = new RateLimiter(350L);
 
     private VkPlaylistApi() {
     }
@@ -45,6 +47,7 @@ final class VkPlaylistApi {
         AtomicReference<List<MusicTrack>> result = new AtomicReference<>();
         AtomicReference<Throwable> error = new AtomicReference<>();
 
+        LIMITER.acquire();
         new AudioSearch(query, false, false, 0, count, 0)
                 .a(new ApiCallback<List<MusicTrack>>() {
                     @Override
@@ -92,7 +95,6 @@ final class VkPlaylistApi {
                 } catch (Throwable ignored) {
                     results.add(new ArrayList<>());
                 }
-                Thread.sleep(120L);
             }
         }
         return results;
@@ -119,6 +121,7 @@ final class VkPlaylistApi {
 
             VKRequest<JSONObject> request = new VKRequest<>("execute");
             request.a("code", code.toString());
+            LIMITER.acquire();
             JSONObject root = request.a(ApiConfig.e);
             JSONArray responses = root == null ? null : root.optJSONArray("response");
             if (responses == null || responses.length() != queries.size()) {
@@ -173,6 +176,7 @@ final class VkPlaylistApi {
     }
 
     static Playlist createPlaylist(int ownerId, String title, String description, List<MusicTrack> initial) throws Exception {
+        LIMITER.acquire();
         AudioSavePlaylist.b builder = new AudioSavePlaylist.b()
                 .a(ownerId)
                 .b(0)
@@ -214,6 +218,7 @@ final class VkPlaylistApi {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Throwable> error = new AtomicReference<>();
 
+        LIMITER.acquire();
         new AudioDeletePlaylist(playlistId, ownerId)
                 .a(new ApiCallback<Boolean>() {
                     @Override
@@ -235,6 +240,7 @@ final class VkPlaylistApi {
     static void addTracks(int ownerId, int playlistId, List<MusicTrack> tracks) throws Exception {
         for (int start = 0; start < tracks.size(); start += ADD_CHUNK) {
             int end = Math.min(start + ADD_CHUNK, tracks.size());
+            LIMITER.acquire();
             AudioAddToPlaylist.b builder = new AudioAddToPlaylist.b()
                     .a(ownerId)
                     .b(playlistId);
@@ -259,13 +265,13 @@ final class VkPlaylistApi {
             }).a();
 
             await(latch, error);
-            Thread.sleep(350L);
         }
     }
 
     static void removeTracks(int ownerId, int playlistId, List<MusicTrack> tracks) throws Exception {
         for (int start = 0; start < tracks.size(); start += ADD_CHUNK) {
             int end = Math.min(start + ADD_CHUNK, tracks.size());
+            LIMITER.acquire();
             AudioRemoveFromPlaylist.b builder = new AudioRemoveFromPlaylist.b()
                     .a(ownerId)
                     .b(playlistId);
@@ -290,7 +296,6 @@ final class VkPlaylistApi {
             }).a();
 
             await(latch, error);
-            Thread.sleep(350L);
         }
     }
 
@@ -301,6 +306,7 @@ final class VkPlaylistApi {
             AtomicReference<List<MusicTrack>> page = new AtomicReference<>();
             AtomicReference<Throwable> error = new AtomicReference<>();
 
+            LIMITER.acquire();
             new AudioGet(ownerId)
                     .d(playlistId)
                     .b(PAGE)
@@ -329,7 +335,6 @@ final class VkPlaylistApi {
             if (tracks.size() < PAGE) {
                 break;
             }
-            Thread.sleep(250L);
         }
         return result;
     }
@@ -346,7 +351,6 @@ final class VkPlaylistApi {
             if (page.size() < count) {
                 break;
             }
-            Thread.sleep(200L);
         }
         return result;
     }
@@ -356,6 +360,7 @@ final class VkPlaylistApi {
         AtomicReference<List<MusicTrack>> page = new AtomicReference<>();
         AtomicReference<Throwable> error = new AtomicReference<>();
 
+        LIMITER.acquire();
         new AudioGet(currentUserId())
                 .b(count)
                 .c(offset)
@@ -383,6 +388,7 @@ final class VkPlaylistApi {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Throwable> error = new AtomicReference<>();
 
+        LIMITER.acquire();
         new AudioAdd(track, null)
                 .a(new ApiCallback<Integer>() {
                     @Override
@@ -407,7 +413,11 @@ final class VkPlaylistApi {
         }
         Throwable throwable = error.get();
         if (throwable instanceof VKApiExecutionException) {
-            throw (VKApiExecutionException) throwable;
+            VKApiExecutionException apiError = (VKApiExecutionException) throwable;
+            if (apiError.d() == RateLimiter.ERROR_FLOOD_CONTROL) {
+                LIMITER.onApiError(apiError.d());
+            }
+            throw apiError;
         }
         if (throwable != null) {
             throw new IllegalStateException(throwable);

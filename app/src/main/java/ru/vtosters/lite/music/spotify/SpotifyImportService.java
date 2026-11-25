@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import ru.vtosters.lite.core.log.VtLog;
 import ru.vtosters.lite.music.wave.TrackMatcher;
 import ru.vtosters.lite.utils.CaptchaImageLoader;
 import ru.vtosters.lite.utils.music.MusicTrackUtils;
@@ -23,12 +24,6 @@ public final class SpotifyImportService {
     private static final String TAG = "VKataxaImport";
     private static final int SEARCH_COUNT = 10;
     private static final int MATCH_BATCH = 10;
-    private static final long BATCH_DELAY_MS = 500L;
-    private static final int SEARCHES_BEFORE_PAUSE = 30;
-    private static final long SEARCH_PAUSE_MS = 60_000L;
-    private static final int CAPTCHA_RETRIES = 4;
-    private static final long CAPTCHA_WAIT_MS = 3 * 60_000L;
-    private static final long CAPTCHA_WAIT_MAX_MS = 30 * 60_000L;
 
     private SpotifyImportService() {
     }
@@ -174,6 +169,7 @@ public final class SpotifyImportService {
             result.added = vkTracks.size();
             callback.onDone(result);
         } catch (Throwable error) {
+            logImportError("import", error);
             callback.onError(error);
         } finally {
             CaptchaImageLoader.setAutoCancelPlaceholder(false);
@@ -193,7 +189,7 @@ public final class SpotifyImportService {
             result.localImport = true;
 
             progress.onProgress(0, localTracks.size(), "Сверяем с «Моей музыкой»...");
-            List<MusicTrack> myMusic = getMyMusicWithRetry(localTracks.size(), progress);
+            List<MusicTrack> myMusic = VkPlaylistApi.getMyMusic();
             Set<String> existing = new HashSet<>();
             Map<String, List<MusicTrack>> byTitle = new HashMap<>();
             for (MusicTrack track : myMusic) {
@@ -243,7 +239,7 @@ public final class SpotifyImportService {
                 progress.onProgress(processed, toAdd.size(),
                         "Добавляем в «Мою музыку»: " + MusicTrackUtils.getArtists(track) + " — " + track.f);
                 try {
-                    addToMyMusicWithRetry(track, processed, toAdd.size(), progress);
+                    VkPlaylistApi.addToMyMusic(track);
                     added++;
                 } catch (Throwable error) {
                     if (isCaptchaError(error)) {
@@ -252,13 +248,6 @@ public final class SpotifyImportService {
                     result.failed++;
                 }
                 processed++;
-                if (processed < toAdd.size()) {
-                    Thread.sleep(300L);
-                    if (processed % SEARCHES_BEFORE_PAUSE == 0) {
-                        waitWithProgress(SEARCH_PAUSE_MS, processed, toAdd.size(), progress,
-                                "Пауза, чтобы VK не запросил капчу:");
-                    }
-                }
             }
 
             result.added = added;
@@ -266,64 +255,10 @@ public final class SpotifyImportService {
                     + " failed=" + result.failed + " notFound=" + result.notFound);
             callback.onDone(result);
         } catch (Throwable error) {
+            logImportError("local", error);
             callback.onError(error);
         } finally {
             CaptchaImageLoader.setAutoCancelPlaceholder(false);
-        }
-    }
-
-    private static List<MusicTrack> getMyMusicWithRetry(int total, Progress progress) throws Exception {
-        long wait = CAPTCHA_WAIT_MS;
-        for (int attempt = 0; ; attempt++) {
-            try {
-                return VkPlaylistApi.getMyMusic();
-            } catch (Throwable error) {
-                if (!isCaptchaError(error) || attempt >= CAPTCHA_RETRIES) {
-                    throw error;
-                }
-                waitWithProgress(wait, total, total, progress,
-                        "VK ограничил запросы. Пауза, затем продолжим автоматически:");
-                wait = Math.min(wait * 2, CAPTCHA_WAIT_MAX_MS);
-            }
-        }
-    }
-
-    private static void addToMyMusicWithRetry(
-            MusicTrack track,
-            int done,
-            int total,
-            Progress progress
-    ) throws Exception {
-        long wait = 60_000L;
-        for (int attempt = 0; ; attempt++) {
-            try {
-                VkPlaylistApi.addToMyMusic(track);
-                return;
-            } catch (Throwable error) {
-                if (!isCaptchaError(error) || attempt >= CAPTCHA_RETRIES) {
-                    throw error;
-                }
-                waitWithProgress(wait, done, total, progress,
-                        "VK ограничил добавление трека. Пауза, затем повторим:");
-                wait = Math.min(wait * 2, CAPTCHA_WAIT_MAX_MS);
-            }
-        }
-    }
-
-    private static void waitWithProgress(
-            long waitMs,
-            int done,
-            int total,
-            Progress progress,
-            String message
-    ) throws InterruptedException {
-        long remaining = waitMs;
-        while (remaining > 0) {
-            long seconds = (remaining + 999L) / 1000L;
-            progress.onProgress(done, total, message + " " + seconds + " с");
-            long step = Math.min(1000L, remaining);
-            Thread.sleep(step);
-            remaining -= step;
         }
     }
 
@@ -401,6 +336,7 @@ public final class SpotifyImportService {
             result.removed = toRemove.size();
             callback.onDone(result);
         } catch (Throwable error) {
+            logImportError("sync", error);
             callback.onError(error);
         } finally {
             CaptchaImageLoader.setAutoCancelPlaceholder(false);
@@ -429,7 +365,6 @@ public final class SpotifyImportService {
             }
         }
 
-        int searchesSincePause = 0;
         for (int start = 0; start < pending.size(); start += MATCH_BATCH) {
             int end = Math.min(start + MATCH_BATCH, pending.size());
             List<Integer> chunk = pending.subList(start, end);
@@ -440,9 +375,7 @@ public final class SpotifyImportService {
                 queries.add(TrackMatcher.query(spotify.artist, spotify.title));
             }
 
-            searchesSincePause = pauseIfNeeded(searchesSincePause, queries.size(), done, total, progress);
             List<List<MusicTrack>> found = searchWithCaptchaRetry(queries, done, total, progress);
-            searchesSincePause += queries.size();
             List<Integer> misses = new ArrayList<>();
 
             for (int position = 0; position < chunk.size(); position++) {
@@ -476,20 +409,12 @@ public final class SpotifyImportService {
                 }
 
                 if (!fallbackQueries.isEmpty()) {
-                    searchesSincePause = pauseIfNeeded(
-                            searchesSincePause,
-                            fallbackQueries.size(),
-                            done,
-                            total,
-                            progress
-                    );
                     List<List<MusicTrack>> fallback = searchWithCaptchaRetry(
                             fallbackQueries,
                             done,
                             total,
                             progress
                     );
-                    searchesSincePause += fallbackQueries.size();
                     for (int position = 0; position < fallbackIndexes.size(); position++) {
                         int index = fallbackIndexes.get(position);
                         SpotifyTrack spotify = spotifyTracks.get(index);
@@ -523,10 +448,6 @@ public final class SpotifyImportService {
                     progress.onProgress(done, total, "Не найдено: " + spotify.artist + " — " + spotify.title);
                 }
             }
-
-            if (end < pending.size()) {
-                Thread.sleep(BATCH_DELAY_MS);
-            }
         }
 
         List<Match> matches = new ArrayList<>(result.matched);
@@ -544,27 +465,8 @@ public final class SpotifyImportService {
             int total,
             Progress progress
     ) throws Exception {
-        long wait = CAPTCHA_WAIT_MS;
-        for (int attempt = 0; ; attempt++) {
-            try {
-                return VkPlaylistApi.searchBatch(queries, SEARCH_COUNT);
-            } catch (Throwable error) {
-                if (!isCaptchaError(error) || attempt >= CAPTCHA_RETRIES) {
-                    throw error;
-                }
-
-                long remaining = wait;
-                while (remaining > 0) {
-                    long seconds = (remaining + 999L) / 1000L;
-                    progress.onProgress(done, total,
-                            "VK ограничил поиск. Пауза " + seconds + " с, затем продолжим автоматически");
-                    long step = Math.min(1000L, remaining);
-                    Thread.sleep(step);
-                    remaining -= step;
-                }
-                wait = Math.min(wait * 2, CAPTCHA_WAIT_MAX_MS);
-            }
-        }
+        // MU-10: no automatic captcha retries; the caller stops and reports the partial state.
+        return VkPlaylistApi.searchBatch(queries, SEARCH_COUNT);
     }
 
     private static boolean isCaptchaError(Throwable error) {
@@ -584,29 +486,17 @@ public final class SpotifyImportService {
         return false;
     }
 
-    private static int pauseIfNeeded(
-            int searchesSincePause,
-            int plannedSearches,
-            int done,
-            int total,
-            Progress progress
-    ) throws InterruptedException {
-        if (plannedSearches <= 0
-                || searchesSincePause == 0
-                || searchesSincePause + plannedSearches <= SEARCHES_BEFORE_PAUSE) {
-            return searchesSincePause;
+    private static void logImportError(String source, Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof VKApiExecutionException) {
+                VtLog.e(TAG, source + " stopped: code=" + ((VKApiExecutionException) current).d()
+                        + " msg=" + current.getMessage());
+                return;
+            }
+            current = current.getCause();
         }
-
-        long remaining = SEARCH_PAUSE_MS;
-        while (remaining > 0) {
-            long seconds = (remaining + 999L) / 1000L;
-            progress.onProgress(done, total,
-                    "Пауза " + seconds + " с: VK ограничивает поиск, чтобы не запросить капчу");
-            long step = Math.min(1000L, remaining);
-            Thread.sleep(step);
-            remaining -= step;
-        }
-        return 0;
+        VtLog.e(TAG, source + " stopped: " + error);
     }
 
     private static String label(SpotifyTrack track) {
