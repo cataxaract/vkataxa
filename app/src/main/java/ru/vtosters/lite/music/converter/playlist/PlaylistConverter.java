@@ -47,12 +47,12 @@ public class PlaylistConverter {
                 "&id=" + id +
                 "&lang=" + getLocale() +
                 "&audio_offset=" + offset +
-                "&need_owner=1" +
-                "&access_token=" + AccountManagerUtils.getUserToken();
+                "&need_owner=1";
 
         var request = new Request.a()
                 .b(requestUrl)
                 .a("Accept-Encoding", "gzip")
+                .a("Authorization", "Bearer " + AccountManagerUtils.getUserToken())
                 .a("User-Agent", Network.l.c().a())
                 .a("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
                 .a();

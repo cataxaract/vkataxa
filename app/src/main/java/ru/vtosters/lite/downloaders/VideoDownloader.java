@@ -58,7 +58,8 @@ public class VideoDownloader {
 
         addVideos(videoFile, qualities, urls);
 
-        Context finalContext = context != null ? context : LifecycleUtils.getCurrentActivity();
+        Context resolvedContext = context != null ? context : LifecycleUtils.getCurrentActivity();
+        final Context finalContext = resolvedContext != null ? resolvedContext : AndroidUtils.getGlobalContext();
 
         if (qualities.isEmpty()) {
             ToastUtils.a(finalContext.getString(R.string.videodownloaderr));
@@ -215,8 +216,9 @@ public class VideoDownloader {
             progressDialog.show();
 
             var req = new Request.a()
-                    .b("https://" + getApi() + "/method/stories.getById?stories=" + storyId + "&v=5.99&access_token=" + getUserToken())
+                    .b("https://" + getApi() + "/method/stories.getById?stories=" + storyId + "&v=5.99")
                     .a("Accept-Encoding", "gzip")
+                    .a("Authorization", "Bearer " + getUserToken())
                     .a();
             
             Network.b(CLIENT_API).a(req).a(new Callback() {
@@ -259,8 +261,9 @@ public class VideoDownloader {
         progressDialog.show();
 
         var req = new Request.a()
-                .b("https://" + getApi() + "/method/video.get?owner_id=" + ownerId + "&videos=" + videoId + "&v=5.99&access_token=" + getUserToken())
+                .b("https://" + getApi() + "/method/video.get?owner_id=" + ownerId + "&videos=" + videoId + "&v=5.99")
                 .a("Accept-Encoding", "gzip")
+                .a("Authorization", "Bearer " + getUserToken())
                 .a();
 
         Network.b(CLIENT_API).a(req).a(new Callback() {

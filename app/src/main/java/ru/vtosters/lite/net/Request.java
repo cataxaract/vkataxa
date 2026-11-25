@@ -16,7 +16,11 @@ public class Request {
     }
 
     public static void makeRequest(String str, RequestCallback RequestCallback) {
-        new MakeRequestTask(str.getBytes(), RequestCallback).execute();
+        new MakeRequestTask(str.getBytes(), null, RequestCallback).execute();
+    }
+
+    public static void makeRequest(String str, String bearer, RequestCallback RequestCallback) {
+        new MakeRequestTask(str.getBytes(), bearer, RequestCallback).execute();
     }
 
     public interface RequestCallback {
@@ -28,18 +32,32 @@ public class Request {
         private final byte[] url;
         private final boolean mIsPut;
         private final boolean mIsVTostersRequest;
+        private final String bearer;
 
         public MakeRequestTask(byte[] bArr, RequestCallback RequestCallback) {
             mIsVTostersRequest = false;
             mIsPut = false;
             callback = RequestCallback;
             url = bArr;
+            bearer = null;
+        }
+
+        public MakeRequestTask(byte[] bArr, String bearer, RequestCallback RequestCallback) {
+            mIsVTostersRequest = false;
+            mIsPut = false;
+            callback = RequestCallback;
+            url = bArr;
+            this.bearer = bearer;
         }
 
         public String doInBackground(Void... voidArr) {
             try {
                 HttpURLConnection httpURLConnection = (HttpURLConnection) new URL(new String(url)).openConnection();
                 httpURLConnection.setRequestMethod(mIsPut ? "PUT" : "GET");
+
+                if (bearer != null && !bearer.isEmpty()) {
+                    httpURLConnection.setRequestProperty("Authorization", "Bearer " + bearer);
+                }
 
                 if (mIsVTostersRequest) {
                     httpURLConnection.setRequestProperty("Token", getUserToken());

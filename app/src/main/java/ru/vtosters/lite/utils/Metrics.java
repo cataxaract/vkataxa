@@ -89,7 +89,8 @@ public class Metrics {
 
     private static void trackEventsRequest(JSONArray object) {
         Request req = new Request.a()
-                .b("https://" + getApi() + "/method/stats.trackEvents?events=" + object.toString() + "&v=5.119&access_token=" + getUserToken())
+                .b("https://" + getApi() + "/method/stats.trackEvents?events=" + object.toString() + "&v=5.119")
+                .a("Authorization", "Bearer " + getUserToken())
                 .a();
 
         Network.b(CLIENT_API).a(req).a(new Callback() {

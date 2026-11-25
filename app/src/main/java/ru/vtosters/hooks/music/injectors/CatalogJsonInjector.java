@@ -281,10 +281,9 @@ public class CatalogJsonInjector {
                         + "&device_id="
                         + DeviceIdProvider.d(AndroidUtils.getGlobalContext())
                         + "&url="
-                        + sectionUrl
-                        + "&access_token="
-                        + AccountManagerUtils.getUserToken())
+                        + sectionUrl)
                 .a("Accept-Encoding", "gzip")
+                .a("Authorization", "Bearer " + AccountManagerUtils.getUserToken())
                 .a("User-Agent", Network.l.c().a())
                 .a("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
                 .a();

@@ -102,8 +102,8 @@ public class MediaFragment extends TrackedMaterialPreferenceToolbarFragment {
     public void deleteVideoHistory() {
         VTExecutors.getIoExecutor().execute(() -> {
             var request = new Request.a()
-                    .b("https://" + ProxyUtils.getApi() + "/method/" + "video.clearViewingHistoryRecords" + "?https=1" + "&access_token=" + AccountManagerUtils.getUserToken() + "&v=5.119")
-                    .a(Headers.a("User-Agent", Network.l.c().a(), "Content-Type", "application/x-www-form-urlencoded; charset=utf-8"))
+                    .b("https://" + ProxyUtils.getApi() + "/method/" + "video.clearViewingHistoryRecords" + "?https=1" + "&v=5.119")
+                    .a(Headers.a("User-Agent", Network.l.c().a(), "Content-Type", "application/x-www-form-urlencoded; charset=utf-8", "Authorization", "Bearer " + AccountManagerUtils.getUserToken()))
                     .a();
 
             try {

@@ -96,7 +96,8 @@ public class OnlineFormatterHook {
         if (appname != null) return appname;
 
         okhttp3.Request req = new okhttp3.Request.a()
-                .b("https://" + getApi() + "/method/apps.get?app_id=" + appid + "&v=5.99&access_token=" + getUserToken())
+                .b("https://" + getApi() + "/method/apps.get?app_id=" + appid + "&v=5.99")
+                .a("Authorization", "Bearer " + getUserToken())
                 .a();
 
         Network.b(CLIENT_API).a(req).a(new Callback() {

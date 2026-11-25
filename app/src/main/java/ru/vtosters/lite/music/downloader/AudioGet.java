@@ -41,12 +41,12 @@ public class AudioGet {
                 "&owner_id=" + getUserId() +
                 "&access_key=" + getUserToken() +
                 "&lang=" + getLocale() +
-                "&offset=" + offset +
-                "&access_token=" + getUserToken();
+                "&offset=" + offset;
 
         var request = new Request.a()
                 .b(requestUrl)
                 .a("Accept-Encoding", "gzip")
+                .a("Authorization", "Bearer " + getUserToken())
                 .a("User-Agent", Network.l.c().a())
                 .a("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
                 .a();

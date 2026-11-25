@@ -101,13 +101,13 @@ public class MessagesDownloader {
         // fix TODO with conversation name (API method messages.getConversationsById)
         fos.write(format.provideDocumentStart("TODO", formatTime(System.currentTimeMillis())).getBytes(StandardCharsets.UTF_8));
 
-        var url = String.format("https://" + ProxyUtils.getApi() + "/method/messages.getHistory?extended=1&v=5.140&offset=%d&count=200&peer_id=%d&access_token=%s",
+        var url = String.format("https://" + ProxyUtils.getApi() + "/method/messages.getHistory?extended=1&v=5.140&offset=%d&count=200&peer_id=%d",
                 0,
-                peer_id,
-                AccountManagerUtils.getUserToken());
+                peer_id);
         var req = new Request.a()
                 .b(url)
                 .a("Accept-Encoding", "gzip")
+                .a("Authorization", "Bearer " + AccountManagerUtils.getUserToken())
                 .a();
         Network.b(CLIENT_API).a(req).a(new Callback() {
             @Override

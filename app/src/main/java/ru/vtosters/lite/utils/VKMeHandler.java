@@ -55,7 +55,8 @@ public class VKMeHandler {
 
     public static void setPrivacyStatus(String status) {
         // all, friends_and_contacts, only_me
-        makeRequest("https://" + getApi() + "/method/account.setPrivacy?" + "v=5.140&key=online&value=" + status + "&https=1&access_token=" + getToken(),
+        makeRequest("https://" + getApi() + "/method/account.setPrivacy?" + "v=5.140&key=online&value=" + status + "&https=1",
+                getToken(),
                 response -> {
                     try {
                         JSONObject mainJson = new JSONObject(response);
@@ -66,7 +67,8 @@ public class VKMeHandler {
     }
 
     public static void getPrivacyStatus() {
-        makeRequest("https://" + getApi() + "/method/execute?v=5.140&code=return API.account.getPrivacySettings().settings[22].value.category;&access_token=" + getToken(),
+        makeRequest("https://" + getApi() + "/method/execute?v=5.140&code=return API.account.getPrivacySettings().settings[22].value.category;",
+                getToken(),
                 response -> {
                     try {
                         String resp = new JSONObject(response).optString("response");
