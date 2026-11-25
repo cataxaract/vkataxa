@@ -23,7 +23,7 @@ import java.util.Set;
 final class ImportProgressDb extends SQLiteOpenHelper {
 
     private static final String DB_NAME = "music_import.db";
-    private static final int DB_VERSION = 2;
+    private static final int DB_VERSION = 3;
     private static final String TABLE_JOBS = "jobs";
     private static final String TABLE_ITEMS = "items";
 
@@ -68,6 +68,10 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         if (oldVersion < 2) {
             db.execSQL("DROP TABLE IF EXISTS " + TABLE_ITEMS);
             createItems(db);
+        } else if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE " + TABLE_ITEMS + " ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("ALTER TABLE " + TABLE_ITEMS + " ADD COLUMN last_error TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE " + TABLE_ITEMS + " ADD COLUMN last_attempt INTEGER NOT NULL DEFAULT 0");
         }
     }
 
@@ -79,6 +83,9 @@ final class ImportProgressDb extends SQLiteOpenHelper {
                 + "track_uid TEXT NOT NULL,"
                 + "state TEXT NOT NULL,"
                 + "track_json TEXT NOT NULL,"
+                + "attempts INTEGER NOT NULL DEFAULT 0,"
+                + "last_error TEXT NOT NULL DEFAULT '',"
+                + "last_attempt INTEGER NOT NULL DEFAULT 0,"
                 + "updated_at INTEGER NOT NULL,"
                 + "PRIMARY KEY(account, key, item_key))");
     }
@@ -133,13 +140,16 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         return result;
     }
 
-    Set<String> completed(int account, String key) {
+    Set<String> completed(int account, String key, long missCutoff) {
         Set<String> result = new HashSet<>();
         try (Cursor cursor = getReadableDatabase().query(
                 TABLE_ITEMS,
                 new String[]{"item_key"},
-                "account = ? AND key = ? AND state IN (?, ?, ?, ?)",
-                new String[]{String.valueOf(account), key, "matched", "add_intent", "miss", "added"},
+                "account = ? AND key = ? AND (state IN (?, ?, ?) OR (state = ? AND last_attempt >= ?))",
+                new String[]{
+                        String.valueOf(account), key,
+                        "matched", "add_intent", "added", "miss", String.valueOf(missCutoff)
+                },
                 null, null, null)) {
             while (cursor.moveToNext()) {
                 result.add(cursor.getString(0));
@@ -150,6 +160,7 @@ final class ImportProgressDb extends SQLiteOpenHelper {
 
     Map<String, MusicTrack> matched(int account, String key) {
         Map<String, MusicTrack> result = new HashMap<>();
+        java.util.List<String> corrupt = new java.util.ArrayList<>();
         try (Cursor cursor = getReadableDatabase().query(
                 TABLE_ITEMS,
                 new String[]{"item_key", "track_json"},
@@ -157,11 +168,17 @@ final class ImportProgressDb extends SQLiteOpenHelper {
                 new String[]{String.valueOf(account), key, "matched", "add_intent", "added"},
                 null, null, null)) {
             while (cursor.moveToNext()) {
+                String itemKey = cursor.getString(0);
                 MusicTrack track = parse(cursor.getString(1));
                 if (track != null) {
-                    result.put(cursor.getString(0), track);
+                    result.put(itemKey, track);
+                } else {
+                    corrupt.add(itemKey);
                 }
             }
+        }
+        for (String itemKey : corrupt) {
+            resetPending(account, key, itemKey);
         }
         return result;
     }
@@ -206,9 +223,38 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         values.put("track_uid", "");
         values.put("state", "miss");
         values.put("track_json", "");
+        values.put("attempts", attempts(account, key, itemKey) + 1);
+        values.put("last_error", "");
+        values.put("last_attempt", System.currentTimeMillis());
         values.put("updated_at", System.currentTimeMillis());
         getWritableDatabase().insertWithOnConflict(
                 TABLE_ITEMS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    private int attempts(int account, String key, String itemKey) {
+        try (Cursor cursor = getReadableDatabase().query(
+                TABLE_ITEMS,
+                new String[]{"attempts"},
+                "account = ? AND key = ? AND item_key = ?",
+                new String[]{String.valueOf(account), key, itemKey},
+                null, null, null)) {
+            if (cursor.moveToFirst()) {
+                return cursor.getInt(0);
+            }
+        }
+        return 0;
+    }
+
+    void resetPending(int account, String key, String itemKey) {
+        ContentValues values = new ContentValues();
+        values.put("state", "pending");
+        values.put("attempts", 0);
+        values.put("last_error", "");
+        values.put("last_attempt", 0L);
+        values.put("updated_at", System.currentTimeMillis());
+        getWritableDatabase().update(
+                TABLE_ITEMS, values, "account = ? AND key = ? AND item_key = ?",
+                new String[]{String.valueOf(account), key, itemKey});
     }
 
     void markAdded(int account, String key, String itemKey, String trackUid) {

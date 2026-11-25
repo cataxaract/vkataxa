@@ -24,6 +24,7 @@ public final class SpotifyImportService {
     private static final String TAG = "VKataxaImport";
     private static final int SEARCH_COUNT = 10;
     private static final int MATCH_BATCH = 10;
+    private static final long MISS_RETRY_TTL_MS = 7L * 24 * 60 * 60 * 1000;
 
     private SpotifyImportService() {
     }
@@ -425,7 +426,8 @@ public final class SpotifyImportService {
         int total = spotifyTracks.size();
         Match[] foundMatches = new Match[total];
         List<Integer> pending = new ArrayList<>();
-        Set<String> completed = progressDb.completed(account, key);
+        Set<String> completed = progressDb.completed(
+                account, key, System.currentTimeMillis() - MISS_RETRY_TTL_MS);
         Map<String, MusicTrack> savedMatches = progressDb.matched(account, key);
 
         int done = 0;
@@ -582,12 +584,28 @@ public final class SpotifyImportService {
         if (track == null) {
             return "";
         }
-        if (track.id != null && !track.id.isEmpty()) {
-            return track.id;
+        boolean localOrCsv = track.local
+                || "local".equals(track.type)
+                || (track.id != null && track.id.startsWith("csv:"));
+        if (!localOrCsv && track.id != null && !track.id.isEmpty()) {
+            return "id:" + track.id;
         }
-        return TrackMatcher.normalize(track.artist) + "|"
-                + TrackMatcher.normalize(track.title) + "|"
-                + track.durationSeconds();
+        return "meta:" + sha1(TrackMatcher.normalize(track.artist) + "|"
+                + TrackMatcher.normalize(track.title) + "|" + track.durationSeconds());
+    }
+
+    private static String sha1(String value) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-1");
+            byte[] bytes = digest.digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder builder = new StringBuilder(bytes.length * 2);
+            for (byte b : bytes) {
+                builder.append(String.format("%02x", b));
+            }
+            return builder.toString();
+        } catch (Throwable ignored) {
+            return Integer.toHexString(value.hashCode());
+        }
     }
 
     private static void markImportStatus(Context context, String key, Throwable error) {
