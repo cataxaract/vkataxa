@@ -31,7 +31,7 @@ import ru.vtosters.lite.utils.AccountManagerUtils;
 final class VkPlaylistApi {
     private static final String TAG = "VKataxaImport";
     private static final int PAGE = 100;
-    private static final int ADD_CHUNK = 50;
+    private static final int ADD_CHUNK = 10;
     private static final int SEARCH_BATCH = 10;
     private static final RateLimiter LIMITER = new RateLimiter(350L);
 
@@ -83,7 +83,7 @@ final class VkPlaylistApi {
                 try {
                     results.add(search(query, count));
                 } catch (VKApiExecutionException error) {
-                    if (error.d() == 14) {
+                    if (error.d() == 14 || error.d() == RateLimiter.ERROR_FLOOD_CONTROL) {
                         throw error;
                     }
                     results.add(new ArrayList<>());

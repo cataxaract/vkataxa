@@ -131,7 +131,8 @@ public final class SpotifyImportService {
 
             ImportProgressDb progressDb = new ImportProgressDb(context);
             ImportProgressDb.Job saved = progressDb.get(ownerId, key);
-            if (saved != null && "captcha".equals(saved.status)) {
+            if (saved != null && saved.status != null
+                    && (saved.status.contains("captcha") || saved.status.contains("flood"))) {
                 progress.onProgress(0, spotifyTracks.size(), "Продолжаем прерванный импорт...");
             }
             progressDb.setStatus(ownerId, key, "matching");
@@ -165,21 +166,35 @@ public final class SpotifyImportService {
                 uidToItem.put(match.track.y1(), itemKey(match.spotify));
             }
             Set<String> alreadyAdded = progressDb.added(targetOwner, key);
+            Set<String> targetUids = readTargetUids(targetOwner, targetPlaylist);
             List<MusicTrack> toAdd = new ArrayList<>();
             for (MusicTrack track : vkTracks) {
-                if (!alreadyAdded.contains(track.y1())) {
+                String uid = track.y1();
+                if (targetUids.contains(uid)) {
+                    progressDb.markAdded(targetOwner, key, uidToItem.getOrDefault(uid, uid), uid);
+                }
+                if (!alreadyAdded.contains(uid) && !targetUids.contains(uid)) {
                     toAdd.add(track);
                 }
             }
 
             if (!toAdd.isEmpty()) {
                 progressDb.setStatus(targetOwner, key, "adding");
-                VkPlaylistApi.addTracks(targetOwner, targetPlaylist, toAdd, chunk -> {
-                    for (MusicTrack track : chunk) {
-                        String uid = track.y1();
-                        progressDb.markAdded(targetOwner, key, uidToItem.getOrDefault(uid, uid), uid);
-                    }
-                });
+                for (MusicTrack track : toAdd) {
+                    String uid = track.y1();
+                    progressDb.saveIntent(targetOwner, key, uidToItem.getOrDefault(uid, uid), track);
+                }
+                try {
+                    VkPlaylistApi.addTracks(targetOwner, targetPlaylist, toAdd, chunk -> {
+                        for (MusicTrack track : chunk) {
+                            String uid = track.y1();
+                            progressDb.markAdded(targetOwner, key, uidToItem.getOrDefault(uid, uid), uid);
+                        }
+                    });
+                } catch (Throwable addError) {
+                    reconcileAdds(targetOwner, targetPlaylist, progressDb, key, toAdd, uidToItem);
+                    throw addError;
+                }
             }
 
             SpotifySyncStore.Entry entry = new SpotifySyncStore.Entry();
@@ -268,7 +283,12 @@ public final class SpotifyImportService {
             List<MusicTrack> toAdd = new ArrayList<>();
             for (Match match : matches) {
                 String uid = match.track.y1();
-                if ((onlyNew && existing.contains(uid)) || alreadyAdded.contains(uid)) {
+                boolean inMyMusic = existing.contains(uid);
+                if (inMyMusic || alreadyAdded.contains(uid)) {
+                    if (inMyMusic) {
+                        progressDb.markAdded(account, "local",
+                                uidToItem.getOrDefault(uid, uid), uid);
+                    }
                     result.skipped++;
                 } else {
                     toAdd.add(match.track);
@@ -281,12 +301,14 @@ public final class SpotifyImportService {
                 progress.onProgress(processed, toAdd.size(),
                         "Добавляем в «Мою музыку»: " + MusicTrackUtils.getArtists(track) + " — " + track.f);
                 try {
-                    VkPlaylistApi.addToMyMusic(track);
                     String uid = track.y1();
-                    progressDb.markAdded(account, "local", uidToItem.getOrDefault(uid, uid), uid);
+                    String item = uidToItem.getOrDefault(uid, uid);
+                    progressDb.saveIntent(account, "local", item, track);
+                    VkPlaylistApi.addToMyMusic(track);
+                    progressDb.markAdded(account, "local", item, uid);
                     added++;
                 } catch (Throwable error) {
-                    if (isCaptchaError(error)) {
+                    if (isCaptchaError(error) || isFloodError(error)) {
                         throw error;
                     }
                     result.failed++;
@@ -570,11 +592,55 @@ public final class SpotifyImportService {
 
     private static void markImportStatus(Context context, String key, Throwable error) {
         try {
-            new ImportProgressDb(context).setStatus(
-                    VkPlaylistApi.currentUserId(),
-                    key,
-                    isCaptchaError(error) ? "captcha" : "paused");
+            String status = isCaptchaError(error)
+                    ? "paused_captcha"
+                    : isFloodError(error) ? "paused_flood" : "paused";
+            new ImportProgressDb(context).setStatus(VkPlaylistApi.currentUserId(), key, status);
         } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean isFloodError(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof VKApiExecutionException
+                    && ((VKApiExecutionException) current).d() == 9) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private static Set<String> readTargetUids(int ownerId, int playlistId) throws Exception {
+        List<MusicTrack> tracks = playlistId == 0
+                ? VkPlaylistApi.getMyMusic()
+                : VkPlaylistApi.getPlaylistTracks(ownerId, playlistId);
+        Set<String> result = new HashSet<>();
+        for (MusicTrack track : tracks) {
+            result.add(track.y1());
+        }
+        return result;
+    }
+
+    private static void reconcileAdds(
+            int ownerId,
+            int playlistId,
+            ImportProgressDb progressDb,
+            String key,
+            List<MusicTrack> attempted,
+            Map<String, String> uidToItem
+    ) {
+        try {
+            Set<String> targetUids = readTargetUids(ownerId, playlistId);
+            for (MusicTrack track : attempted) {
+                String uid = track.y1();
+                if (targetUids.contains(uid)) {
+                    progressDb.markAdded(ownerId, key, uidToItem.getOrDefault(uid, uid), uid);
+                }
+            }
+        } catch (Throwable reconcileError) {
+            logImportError("reconcile", reconcileError);
         }
     }
 

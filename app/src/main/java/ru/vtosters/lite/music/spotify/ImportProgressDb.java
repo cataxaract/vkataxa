@@ -41,6 +41,13 @@ final class ImportProgressDb extends SQLiteOpenHelper {
 
     ImportProgressDb(Context context) {
         super(context.getApplicationContext(), DB_NAME, null, DB_VERSION);
+        setWriteAheadLoggingEnabled(true);
+    }
+
+    @Override
+    public void onConfigure(SQLiteDatabase db) {
+        super.onConfigure(db);
+        db.execSQL("PRAGMA busy_timeout=5000");
     }
 
     @Override
@@ -131,8 +138,8 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         try (Cursor cursor = getReadableDatabase().query(
                 TABLE_ITEMS,
                 new String[]{"item_key"},
-                "account = ? AND key = ? AND state IN (?, ?, ?)",
-                new String[]{String.valueOf(account), key, "matched", "miss", "added"},
+                "account = ? AND key = ? AND state IN (?, ?, ?, ?)",
+                new String[]{String.valueOf(account), key, "matched", "add_intent", "miss", "added"},
                 null, null, null)) {
             while (cursor.moveToNext()) {
                 result.add(cursor.getString(0));
@@ -146,8 +153,8 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         try (Cursor cursor = getReadableDatabase().query(
                 TABLE_ITEMS,
                 new String[]{"item_key", "track_json"},
-                "account = ? AND key = ? AND state IN (?, ?)",
-                new String[]{String.valueOf(account), key, "matched", "added"},
+                "account = ? AND key = ? AND state IN (?, ?, ?)",
+                new String[]{String.valueOf(account), key, "matched", "add_intent", "added"},
                 null, null, null)) {
             while (cursor.moveToNext()) {
                 MusicTrack track = parse(cursor.getString(1));
@@ -169,6 +176,22 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         values.put("item_key", itemKey);
         values.put("track_uid", track.y1());
         values.put("state", "matched");
+        values.put("track_json", track.J() == null ? "{}" : track.J().toString());
+        values.put("updated_at", System.currentTimeMillis());
+        getWritableDatabase().insertWithOnConflict(
+                TABLE_ITEMS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    void saveIntent(int account, String key, String itemKey, MusicTrack track) {
+        if (track == null) {
+            return;
+        }
+        ContentValues values = new ContentValues();
+        values.put("account", account);
+        values.put("key", key);
+        values.put("item_key", itemKey);
+        values.put("track_uid", track.y1());
+        values.put("state", "add_intent");
         values.put("track_json", track.J() == null ? "{}" : track.J().toString());
         values.put("updated_at", System.currentTimeMillis());
         getWritableDatabase().insertWithOnConflict(
