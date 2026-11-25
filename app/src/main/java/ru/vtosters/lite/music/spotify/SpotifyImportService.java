@@ -138,15 +138,10 @@ public final class SpotifyImportService {
             }
             progressDb.setStatus(ownerId, key, "matching");
 
-            List<Match> matches = matchTracks(spotifyTracks, progress, result, progressDb, ownerId, key);
-            if (matches.isEmpty()) {
-                throw new IllegalStateException("Не найдено ни одного трека");
-            }
-
-            List<MusicTrack> vkTracks = toTracks(matches);
-            int targetPlaylist;
+            final int targetOwner;
+            final int targetPlaylist;
             if (saved != null && saved.playlistId != 0) {
-                ownerId = saved.ownerId;
+                targetOwner = saved.ownerId;
                 targetPlaylist = saved.playlistId;
                 result.created = false;
             } else {
@@ -156,24 +151,31 @@ public final class SpotifyImportService {
                         "Импортировано из Spotify",
                         new ArrayList<>()
                 );
+                targetOwner = ownerId;
                 targetPlaylist = created.a;
-                progressDb.saveTarget(ownerId, key, ownerId, targetPlaylist, "adding");
+                progressDb.saveTarget(targetOwner, key, targetOwner, targetPlaylist, "matching");
                 result.created = true;
             }
 
-            final int targetOwner = ownerId;
+            Set<String> alreadyAdded = progressDb.added(targetOwner, key);
+            Set<String> targetUids = readTargetUids(targetOwner, targetPlaylist);
+            List<MusicTrack> addedNow = new ArrayList<>();
+            List<Match> matches = matchTracks(spotifyTracks, progress, result, progressDb,
+                    targetOwner, key, batch -> addMatchesImmediately(
+                            targetOwner, targetPlaylist, progressDb, key,
+                            batch, targetUids, alreadyAdded, addedNow));
+            if (matches.isEmpty() && addedNow.isEmpty()) {
+                throw new IllegalStateException("Не найдено ни одного трека");
+            }
+
+            List<MusicTrack> vkTracks = toTracks(matches);
             final Map<String, String> uidToItem = new HashMap<>();
             for (Match match : matches) {
                 uidToItem.put(match.track.y1(), itemKey(match.spotify));
             }
-            Set<String> alreadyAdded = progressDb.added(targetOwner, key);
-            Set<String> targetUids = readTargetUids(targetOwner, targetPlaylist);
             List<MusicTrack> toAdd = new ArrayList<>();
             for (MusicTrack track : vkTracks) {
                 String uid = track.y1();
-                if (targetUids.contains(uid)) {
-                    progressDb.markAdded(targetOwner, key, uidToItem.getOrDefault(uid, uid), uid);
-                }
                 if (!alreadyAdded.contains(uid) && !targetUids.contains(uid)) {
                     toAdd.add(track);
                 }
@@ -190,6 +192,8 @@ public final class SpotifyImportService {
                         for (MusicTrack track : chunk) {
                             String uid = track.y1();
                             progressDb.markAdded(targetOwner, key, uidToItem.getOrDefault(uid, uid), uid);
+                            targetUids.add(uid);
+                            addedNow.add(track);
                         }
                     });
                 } catch (Throwable addError) {
@@ -212,8 +216,8 @@ public final class SpotifyImportService {
 
             result.ownerId = targetOwner;
             result.playlistId = targetPlaylist;
-            result.added = toAdd.size();
-            result.skipped = vkTracks.size() - toAdd.size();
+            result.added = addedNow.size() + toAdd.size();
+            result.skipped = vkTracks.size() - toAdd.size() - addedNow.size();
             callback.onDone(result);
         } catch (Throwable error) {
             logImportError("import", error);
@@ -415,6 +419,10 @@ public final class SpotifyImportService {
         }
     }
 
+    private interface MatchSink {
+        void onMatches(List<Match> matches) throws Exception;
+    }
+
     private static List<Match> matchTracks(
             List<SpotifyTrack> spotifyTracks,
             Progress progress,
@@ -422,6 +430,18 @@ public final class SpotifyImportService {
             ImportProgressDb progressDb,
             int account,
             String key
+    ) throws Exception {
+        return matchTracks(spotifyTracks, progress, result, progressDb, account, key, null);
+    }
+
+    private static List<Match> matchTracks(
+            List<SpotifyTrack> spotifyTracks,
+            Progress progress,
+            Result result,
+            ImportProgressDb progressDb,
+            int account,
+            String key,
+            MatchSink sink
     ) throws Exception {
         int total = spotifyTracks.size();
         Match[] foundMatches = new Match[total];
@@ -525,6 +545,18 @@ public final class SpotifyImportService {
                 } else {
                     progressDb.saveMiss(account, key, item);
                     progress.onProgress(done, total, "Не найдено: " + spotify.artist + " — " + spotify.title);
+                }
+            }
+
+            if (sink != null) {
+                List<Match> fresh = new ArrayList<>();
+                for (Integer index : chunk) {
+                    if (foundMatches[index] != null) {
+                        fresh.add(foundMatches[index]);
+                    }
+                }
+                if (!fresh.isEmpty()) {
+                    sink.onMatches(fresh);
                 }
             }
         }
@@ -651,6 +683,54 @@ public final class SpotifyImportService {
             result.add(track.y1());
         }
         return result;
+    }
+
+    private static void addMatchesImmediately(
+            int ownerId,
+            int playlistId,
+            ImportProgressDb progressDb,
+            String key,
+            List<Match> matches,
+            Set<String> targetUids,
+            Set<String> alreadyAdded,
+            List<MusicTrack> addedNow
+    ) throws Exception {
+        Map<String, String> uidToItem = new HashMap<>();
+        List<MusicTrack> toAdd = new ArrayList<>();
+        for (Match match : matches) {
+            String uid = match.track.y1();
+            String item = itemKey(match.spotify);
+            uidToItem.put(uid, item);
+            if (targetUids.contains(uid)) {
+                progressDb.markAdded(ownerId, key, item, uid);
+                continue;
+            }
+            if (alreadyAdded.contains(uid)) {
+                targetUids.add(uid);
+                continue;
+            }
+            progressDb.saveIntent(ownerId, key, item, match.track);
+            toAdd.add(match.track);
+        }
+        if (toAdd.isEmpty()) {
+            return;
+        }
+
+        progressDb.setStatus(ownerId, key, "adding");
+        try {
+            VkPlaylistApi.addTracks(ownerId, playlistId, toAdd, chunk -> {
+                for (MusicTrack track : chunk) {
+                    String uid = track.y1();
+                    String item = uidToItem.getOrDefault(uid, uid);
+                    progressDb.markAdded(ownerId, key, item, uid);
+                    targetUids.add(uid);
+                    addedNow.add(track);
+                }
+            });
+        } catch (Throwable addError) {
+            reconcileAdds(ownerId, playlistId, progressDb, key, toAdd, uidToItem);
+            throw addError;
+        }
     }
 
     private static void reconcileAdds(
