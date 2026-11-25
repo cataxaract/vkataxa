@@ -7,17 +7,23 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 
+import com.vk.dto.music.MusicTrack;
+
+import org.json.JSONObject;
+
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 /**
- * MU-10 phase 2: persistent target + added-track state per import key. Matching progress is not
- * stored yet; re-running the same import reuses the playlist and skips already added VK ids.
+ * MU-10: persistent import journal. Matching results, target playlist and added VK ids are stored
+ * per import key so captcha/restart does not lose found tracks.
  */
 final class ImportProgressDb extends SQLiteOpenHelper {
 
     private static final String DB_NAME = "music_import.db";
-    private static final int DB_VERSION = 1;
+    private static final int DB_VERSION = 2;
     private static final String TABLE_JOBS = "jobs";
     private static final String TABLE_ITEMS = "items";
 
@@ -47,17 +53,27 @@ final class ImportProgressDb extends SQLiteOpenHelper {
                 + "status TEXT NOT NULL,"
                 + "updated_at INTEGER NOT NULL,"
                 + "PRIMARY KEY(account, key))");
-        db.execSQL("CREATE TABLE " + TABLE_ITEMS + " ("
-                + "account INTEGER NOT NULL,"
-                + "key TEXT NOT NULL,"
-                + "track_uid TEXT NOT NULL,"
-                + "updated_at INTEGER NOT NULL,"
-                + "PRIMARY KEY(account, key, track_uid))");
+        createItems(db);
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        // v1 only.
+        if (oldVersion < 2) {
+            db.execSQL("DROP TABLE IF EXISTS " + TABLE_ITEMS);
+            createItems(db);
+        }
+    }
+
+    private static void createItems(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE " + TABLE_ITEMS + " ("
+                + "account INTEGER NOT NULL,"
+                + "key TEXT NOT NULL,"
+                + "item_key TEXT NOT NULL,"
+                + "track_uid TEXT NOT NULL,"
+                + "state TEXT NOT NULL,"
+                + "track_json TEXT NOT NULL,"
+                + "updated_at INTEGER NOT NULL,"
+                + "PRIMARY KEY(account, key, item_key))");
     }
 
     Job get(int account, String key) {
@@ -100,8 +116,8 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         try (Cursor cursor = getReadableDatabase().query(
                 TABLE_ITEMS,
                 new String[]{"track_uid"},
-                "account = ? AND key = ?",
-                new String[]{String.valueOf(account), key},
+                "account = ? AND key = ? AND state = ?",
+                new String[]{String.valueOf(account), key, "added"},
                 null, null, null)) {
             while (cursor.moveToNext()) {
                 result.add(cursor.getString(0));
@@ -110,17 +126,84 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         return result;
     }
 
-    void markAdded(int account, String key, String trackUid) {
-        if (trackUid == null || trackUid.isEmpty()) {
+    Set<String> completed(int account, String key) {
+        Set<String> result = new HashSet<>();
+        try (Cursor cursor = getReadableDatabase().query(
+                TABLE_ITEMS,
+                new String[]{"item_key"},
+                "account = ? AND key = ? AND state IN (?, ?, ?)",
+                new String[]{String.valueOf(account), key, "matched", "miss", "added"},
+                null, null, null)) {
+            while (cursor.moveToNext()) {
+                result.add(cursor.getString(0));
+            }
+        }
+        return result;
+    }
+
+    Map<String, MusicTrack> matched(int account, String key) {
+        Map<String, MusicTrack> result = new HashMap<>();
+        try (Cursor cursor = getReadableDatabase().query(
+                TABLE_ITEMS,
+                new String[]{"item_key", "track_json"},
+                "account = ? AND key = ? AND state IN (?, ?)",
+                new String[]{String.valueOf(account), key, "matched", "added"},
+                null, null, null)) {
+            while (cursor.moveToNext()) {
+                MusicTrack track = parse(cursor.getString(1));
+                if (track != null) {
+                    result.put(cursor.getString(0), track);
+                }
+            }
+        }
+        return result;
+    }
+
+    void saveMatched(int account, String key, String itemKey, MusicTrack track) {
+        if (track == null) {
             return;
         }
         ContentValues values = new ContentValues();
         values.put("account", account);
         values.put("key", key);
-        values.put("track_uid", trackUid);
+        values.put("item_key", itemKey);
+        values.put("track_uid", track.y1());
+        values.put("state", "matched");
+        values.put("track_json", track.J() == null ? "{}" : track.J().toString());
         values.put("updated_at", System.currentTimeMillis());
         getWritableDatabase().insertWithOnConflict(
                 TABLE_ITEMS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    void saveMiss(int account, String key, String itemKey) {
+        ContentValues values = new ContentValues();
+        values.put("account", account);
+        values.put("key", key);
+        values.put("item_key", itemKey);
+        values.put("track_uid", "");
+        values.put("state", "miss");
+        values.put("track_json", "");
+        values.put("updated_at", System.currentTimeMillis());
+        getWritableDatabase().insertWithOnConflict(
+                TABLE_ITEMS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    void markAdded(int account, String key, String itemKey, String trackUid) {
+        ContentValues values = new ContentValues();
+        values.put("state", "added");
+        values.put("track_uid", trackUid == null ? "" : trackUid);
+        values.put("updated_at", System.currentTimeMillis());
+        int updated = getWritableDatabase().update(
+                TABLE_ITEMS, values, "account = ? AND key = ? AND item_key = ?",
+                new String[]{String.valueOf(account), key, itemKey});
+        if (updated == 0) {
+            values.put("account", account);
+            values.put("key", key);
+            values.put("item_key", itemKey);
+            values.put("track_json", "");
+            getWritableDatabase().insertWithOnConflict(
+                    TABLE_ITEMS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
+        }
     }
 
     void clear(int account, String key) {
@@ -128,5 +211,16 @@ final class ImportProgressDb extends SQLiteOpenHelper {
                 TABLE_JOBS, "account = ? AND key = ?", new String[]{String.valueOf(account), key});
         getWritableDatabase().delete(
                 TABLE_ITEMS, "account = ? AND key = ?", new String[]{String.valueOf(account), key});
+    }
+
+    private static MusicTrack parse(String json) {
+        if (json == null || json.isEmpty()) {
+            return null;
+        }
+        try {
+            return new MusicTrack(new JSONObject(json));
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 }
