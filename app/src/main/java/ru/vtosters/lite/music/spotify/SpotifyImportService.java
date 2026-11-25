@@ -272,10 +272,13 @@ public final class SpotifyImportService {
                 }
             }
 
+            Set<String> targetUids = new HashSet<>(existing);
+            List<MusicTrack> addedNow = new ArrayList<>();
             if (!toSearch.isEmpty()) {
                 Result searchResult = new Result();
                 matches.addAll(matchTracks(toSearch, progress, searchResult,
-                        progressDb, account, "local"));
+                        progressDb, account, "local", batch -> addLocalMatchesImmediately(
+                                account, progressDb, batch, targetUids, alreadyAdded, addedNow)));
                 result.notFound = searchResult.notFound;
                 result.notFoundTracks.addAll(searchResult.notFoundTracks);
             }
@@ -288,7 +291,7 @@ public final class SpotifyImportService {
             List<MusicTrack> toAdd = new ArrayList<>();
             for (Match match : matches) {
                 String uid = match.track.y1();
-                boolean inMyMusic = existing.contains(uid);
+                boolean inMyMusic = existing.contains(uid) || targetUids.contains(uid);
                 if (inMyMusic || alreadyAdded.contains(uid)) {
                     if (inMyMusic) {
                         progressDb.markAdded(account, "local",
@@ -307,10 +310,15 @@ public final class SpotifyImportService {
                         "Добавляем в «Мою музыку»: " + MusicTrackUtils.getArtists(track) + " — " + track.f);
                 try {
                     String uid = track.y1();
+                    if (targetUids.contains(uid) || alreadyAdded.contains(uid)) {
+                        processed++;
+                        continue;
+                    }
                     String item = uidToItem.getOrDefault(uid, uid);
                     progressDb.saveIntent(account, "local", item, track);
                     VkPlaylistApi.addToMyMusic(track);
                     progressDb.markAdded(account, "local", item, uid);
+                    targetUids.add(uid);
                     added++;
                 } catch (Throwable error) {
                     if (isCaptchaError(error) || isFloodError(error) || isBudgetError(error)) {
@@ -321,7 +329,7 @@ public final class SpotifyImportService {
                 processed++;
             }
 
-            result.added = added;
+            result.added = addedNow.size() + added;
             Log.d(TAG, "local import: added=" + result.added + " skipped=" + result.skipped
                     + " failed=" + result.failed + " notFound=" + result.notFound);
             progressDb.clear(account, "local");
@@ -683,6 +691,28 @@ public final class SpotifyImportService {
             result.add(track.y1());
         }
         return result;
+    }
+
+    private static void addLocalMatchesImmediately(
+            int account,
+            ImportProgressDb progressDb,
+            List<Match> matches,
+            Set<String> targetUids,
+            Set<String> alreadyAdded,
+            List<MusicTrack> addedNow
+    ) throws Exception {
+        for (Match match : matches) {
+            String uid = match.track.y1();
+            if (targetUids.contains(uid) || alreadyAdded.contains(uid)) {
+                continue;
+            }
+            String item = itemKey(match.spotify);
+            progressDb.saveIntent(account, "local", item, match.track);
+            VkPlaylistApi.addToMyMusic(match.track);
+            progressDb.markAdded(account, "local", item, uid);
+            targetUids.add(uid);
+            addedNow.add(match.track);
+        }
     }
 
     private static void addMatchesImmediately(
