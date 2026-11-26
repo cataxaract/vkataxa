@@ -13,15 +13,21 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.OpenableColumns;
+import android.text.Editable;
 import android.text.InputType;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.BaseAdapter;
+import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -48,9 +54,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import ru.vtosters.hooks.other.Preferences;
 import ru.vtosters.hooks.other.ThemesUtils;
+import ru.vtosters.lite.core.flags.FeatureFlags;
 import ru.vtosters.lite.utils.AccountManagerUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
 
@@ -70,7 +78,10 @@ public class SpotifyImportActivity extends AppCompatActivity {
     private TextView status;
     private TextView pausedJobs;
     private TextView localFolder;
+    private TextView cancelButton;
     private boolean running;
+    private Future<?> currentTask;
+    private volatile boolean cancelRequested;
     private String pendingCsvKey;
     private String pendingCsvName;
 
@@ -123,6 +134,12 @@ public class SpotifyImportActivity extends AppCompatActivity {
         }
 
         Uri uri = data.getData();
+        try {
+            getContentResolver().takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (Throwable ignored) {
+        }
+        String source = uri.toString();
         String fileName = displayName(uri);
         String key = pendingCsvKey;
         String name = pendingCsvName;
@@ -136,7 +153,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
                     throw new IllegalStateException("Не удалось открыть CSV");
                 }
                 CsvPlaylistParser.Result parsed = CsvPlaylistParser.parse(fileName, input);
-                main.post(() -> startCsv(parsed, key, name));
+                main.post(() -> startCsv(parsed, key, name, source));
             } catch (Throwable error) {
                 main.post(() -> {
                     hideProgress();
@@ -241,6 +258,13 @@ public class SpotifyImportActivity extends AppCompatActivity {
         status = text("", 12, secondaryText(), false);
         status.setPadding(0, dp(8), 0, 0);
         footer.addView(status);
+
+        cancelButton = text("Отмена", 12, accent(), true);
+        cancelButton.setGravity(Gravity.END);
+        cancelButton.setPadding(0, dp(8), 0, 0);
+        cancelButton.setVisibility(View.GONE);
+        cancelButton.setOnClickListener(v -> cancelImport());
+        footer.addView(cancelButton);
     }
 
     private void handleIntent(Intent intent) {
@@ -698,25 +722,30 @@ public class SpotifyImportActivity extends AppCompatActivity {
         executor.execute(() -> {
             try {
                 List<SpotifyTrack> tracks;
-                String source;
+                String source = tree.isEmpty() ? "media" : tree;
+                String label;
                 if (!tree.isEmpty()) {
                     Uri uri = Uri.parse(tree);
                     tracks = LocalMusicScanner.scanTree(this, uri);
-                    source = folderName(uri);
+                    label = folderName(uri);
                 } else {
                     File folder = LocalMusicScanner.defaultFolder();
                     tracks = LocalMusicScanner.scan(this, folder);
-                    source = "Music/ и Download/";
+                    label = "Music/ и Download/";
                 }
                 main.post(() -> {
                     if (tracks.isEmpty()) {
                         running = false;
                         hideProgress();
-                        Toast.makeText(this, "В " + source + " нет аудиофайлов", Toast.LENGTH_LONG).show();
+                        Toast.makeText(this, "В " + label + " нет аудиофайлов", Toast.LENGTH_LONG).show();
                         return;
                     }
                     hideProgress();
-                    showLocalImportDialog(tracks, source);
+                    if (FeatureFlags.isEnabled(FeatureFlags.Flag.IMPORT_UI)) {
+                        showLocalTrackSelection(tracks, source, label);
+                    } else {
+                        showLocalImportDialog(tracks, source, label);
+                    }
                 });
             } catch (Throwable error) {
                 main.post(() -> {
@@ -728,12 +757,185 @@ public class SpotifyImportActivity extends AppCompatActivity {
         });
     }
 
-    private void showLocalImportDialog(List<SpotifyTrack> tracks, String source) {
+    // IMP-3: dry-run selection/filter before local import; nothing is added until the target dialog.
+    private void showLocalTrackSelection(List<SpotifyTrack> tracks, String source, String label) {
+        final boolean[] selected = new boolean[tracks.size()];
+        final List<Integer> visible = new ArrayList<>();
+        for (int i = 0; i < tracks.size(); i++) {
+            visible.add(i);
+        }
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(16), dp(16), dp(16), dp(8));
+        root.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Math.round(getResources().getDisplayMetrics().heightPixels * 0.7f)));
+
+        EditText filter = new EditText(this);
+        filter.setSingleLine(true);
+        filter.setHint("Фильтр: исполнитель или название");
+        filter.setInputType(InputType.TYPE_CLASS_TEXT);
+        filter.setTextColor(text());
+        filter.setHintTextColor(secondaryText());
+        root.addView(filter, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        ListView list = new ListView(this);
+        root.addView(list, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        Button all = new Button(this);
+        all.setAllCaps(false);
+        all.setText("Все");
+        Button none = new Button(this);
+        none.setAllCaps(false);
+        none.setText("Ничего");
+        Button next = new Button(this);
+        next.setAllCaps(false);
+        next.setText("Далее (0)");
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.addView(all, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        buttons.addView(none, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        buttons.addView(next, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f));
+        root.addView(buttons, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        Runnable updateNext = () -> {
+            int count = 0;
+            for (boolean value : selected) {
+                if (value) {
+                    count++;
+                }
+            }
+            next.setText("Далее (" + count + ")");
+        };
+
+        final BaseAdapter adapter = new BaseAdapter() {
+            @Override
+            public int getCount() {
+                return visible.size();
+            }
+
+            @Override
+            public Object getItem(int position) {
+                return tracks.get(visible.get(position));
+            }
+
+            @Override
+            public long getItemId(int position) {
+                return visible.get(position);
+            }
+
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                CheckBox view = convertView instanceof CheckBox
+                        ? (CheckBox) convertView : new CheckBox(SpotifyImportActivity.this);
+                int index = visible.get(position);
+                SpotifyTrack track = tracks.get(index);
+                view.setOnCheckedChangeListener(null);
+                view.setText(track.artist + " — " + track.title + " · "
+                        + formatDuration(track.durationSeconds()));
+                view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+                view.setTextColor(text());
+                view.setChecked(selected[index]);
+                view.setOnCheckedChangeListener((button, checked) -> {
+                    selected[index] = checked;
+                    updateNext.run();
+                });
+                return view;
+            }
+        };
+        list.setAdapter(adapter);
+
+        Runnable rebuild = () -> {
+            String query = filter.getText().toString().trim().toLowerCase(Locale.ROOT);
+            visible.clear();
+            for (int i = 0; i < tracks.size(); i++) {
+                SpotifyTrack track = tracks.get(i);
+                String haystack = (track.artist + " " + track.title)
+                        .toLowerCase(Locale.ROOT);
+                if (query.isEmpty() || haystack.contains(query)) {
+                    visible.add(i);
+                }
+            }
+            adapter.notifyDataSetChanged();
+        };
+        filter.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                rebuild.run();
+            }
+        });
+
+        all.setOnClickListener(v -> {
+            for (int index : visible) {
+                selected[index] = true;
+            }
+            adapter.notifyDataSetChanged();
+            updateNext.run();
+        });
+        none.setOnClickListener(v -> {
+            for (int index : visible) {
+                selected[index] = false;
+            }
+            adapter.notifyDataSetChanged();
+            updateNext.run();
+        });
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Выбор треков (" + tracks.size() + ")")
+                .setView(root)
+                .setNegativeButton("Отмена", (d, which) -> running = false)
+                .setOnCancelListener(d -> running = false)
+                .show();
+
+        next.setOnClickListener(v -> {
+            List<SpotifyTrack> chosen = new ArrayList<>();
+            for (int i = 0; i < selected.length; i++) {
+                if (selected[i]) {
+                    chosen.add(tracks.get(i));
+                }
+            }
+            if (chosen.isEmpty()) {
+                Toast.makeText(this, "Ничего не выбрано", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            dialog.dismiss();
+            showLocalImportDialog(chosen, source, label + " · выбрано "
+                    + chosen.size() + " из " + tracks.size());
+        });
+
+        updateNext.run();
+        rebuild.run();
+    }
+
+    private static String formatDuration(int seconds) {
+        int safe = Math.max(0, seconds);
+        return String.format(Locale.ROOT, "%d:%02d", safe / 60, safe % 60);
+    }
+
+    private void showLocalImportDialog(List<SpotifyTrack> tracks, String source, String label) {
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.VERTICAL);
         header.setPadding(dp(24), dp(20), dp(24), dp(8));
         header.addView(text("Найдено " + tracks.size() + " аудиофайлов", 20, text(), true));
-        TextView summary = text(preview(source, tracks), 12, secondaryText(), false);
+        TextView summary = text(preview(label, tracks), 12, secondaryText(), false);
         summary.setPadding(0, dp(6), 0, 0);
         header.addView(summary);
 
@@ -745,11 +947,11 @@ public class SpotifyImportActivity extends AppCompatActivity {
                         "В новый плейлист"
                 }, (d, which) -> {
                     if (which == 0) {
-                        runLocalImport(tracks, true, 0, 0);
+                        runLocalImport(tracks, true, 0, 0, source);
                     } else if (which == 1) {
-                        loadLocalPlaylists(tracks);
+                        loadLocalPlaylists(tracks, source);
                     } else {
-                        showNewLocalPlaylistDialog(tracks);
+                        showNewLocalPlaylistDialog(tracks, source);
                     }
                 })
                 .setNegativeButton("Отмена", (d, which) -> running = false)
@@ -826,7 +1028,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
         return text.toString();
     }
 
-    private void loadLocalPlaylists(List<SpotifyTrack> tracks) {
+    private void loadLocalPlaylists(List<SpotifyTrack> tracks, String source) {
         showProgress("Загружаем плейлисты...");
         executor.execute(() -> {
             try {
@@ -850,7 +1052,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
                                     Toast.makeText(this, "Некорректный плейлист", Toast.LENGTH_SHORT).show();
                                     return;
                                 }
-                                runLocalImport(tracks, true, ids[0], ids[1]);
+                                runLocalImport(tracks, true, ids[0], ids[1], source);
                             })
                             .setNegativeButton("Отмена", null)
                             .show();
@@ -864,7 +1066,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
         });
     }
 
-    private void showNewLocalPlaylistDialog(List<SpotifyTrack> tracks) {
+    private void showNewLocalPlaylistDialog(List<SpotifyTrack> tracks, String source) {
         EditText input = new EditText(this);
         input.setHint("Название плейлиста");
         input.setSingleLine(true);
@@ -877,13 +1079,13 @@ public class SpotifyImportActivity extends AppCompatActivity {
                     if (name.isEmpty()) {
                         name = "Импорт локальной музыки";
                     }
-                    createLocalPlaylist(tracks, name);
+                    createLocalPlaylist(tracks, name, source);
                 })
                 .setNegativeButton("Отмена", (d, which) -> running = false)
                 .show();
     }
 
-    private void createLocalPlaylist(List<SpotifyTrack> tracks, String name) {
+    private void createLocalPlaylist(List<SpotifyTrack> tracks, String name, String source) {
         showProgress("Создаём плейлист...");
         executor.execute(() -> {
             try {
@@ -892,7 +1094,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
                         owner, name, "Импортировано локально", new ArrayList<>());
                 main.post(() -> {
                     hideProgress();
-                    runLocalImport(tracks, true, owner, playlist.a);
+                    runLocalImport(tracks, true, owner, playlist.a, source);
                 });
             } catch (Throwable error) {
                 main.post(() -> {
@@ -922,12 +1124,10 @@ public class SpotifyImportActivity extends AppCompatActivity {
         }
     }
 
-    private void runLocalImport(List<SpotifyTrack> tracks, boolean onlyNew) {
-        runLocalImport(tracks, onlyNew, 0, 0);
-    }
-
-    private void runLocalImport(List<SpotifyTrack> tracks, boolean onlyNew, int targetOwner, int targetPlaylist) {
-        showProgress("Ищем треки в VK...");
+    private void runLocalImport(List<SpotifyTrack> tracks, boolean onlyNew,
+                                int targetOwner, int targetPlaylist, String source) {
+        cancelRequested = false;
+        showImportProgress("Ищем треки в VK...");
 
         SpotifyImportService.Progress progressCallback = (done, total, message) -> main.post(() -> {
             if (total > 0) {
@@ -940,6 +1140,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
             @Override
             public void onDone(SpotifyImportService.Result result) {
                 main.post(() -> {
+                    cancelRequested = false;
                     running = false;
                     hideProgress();
                     Toast.makeText(SpotifyImportActivity.this, result.summary(), Toast.LENGTH_LONG).show();
@@ -951,8 +1152,13 @@ public class SpotifyImportActivity extends AppCompatActivity {
             @Override
             public void onError(Throwable error) {
                 main.post(() -> {
+                    boolean canceled = cancelRequested;
+                    cancelRequested = false;
                     running = false;
                     hideProgress();
+                    if (canceled) {
+                        return;
+                    }
                     Toast.makeText(
                             SpotifyImportActivity.this,
                             "Ошибка: " + message(error),
@@ -962,12 +1168,13 @@ public class SpotifyImportActivity extends AppCompatActivity {
             }
         };
 
-        executor.execute(() -> SpotifyImportService.importLocalMusic(
+        currentTask = executor.submit(() -> SpotifyImportService.importLocalMusic(
                 this,
                 tracks,
                 onlyNew,
                 targetOwner,
                 targetPlaylist,
+                source,
                 progressCallback,
                 callback
         ));
@@ -1075,6 +1282,8 @@ public class SpotifyImportActivity extends AppCompatActivity {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
                 "text/csv",
                 "text/comma-separated-values",
@@ -1091,7 +1300,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
         }
     }
 
-    private void startCsv(CsvPlaylistParser.Result parsed, String key, String name) {
+    private void startCsv(CsvPlaylistParser.Result parsed, String key, String name, String source) {
         if (running) {
             hideProgress();
             Toast.makeText(this, "Дождитесь завершения операции", Toast.LENGTH_SHORT).show();
@@ -1104,7 +1313,8 @@ public class SpotifyImportActivity extends AppCompatActivity {
         boolean sync = existing != null && existing.valid();
 
         running = true;
-        showProgress(sync ? "Синхронизируем CSV..." : "Импортируем CSV...");
+        cancelRequested = false;
+        showImportProgress(sync ? "Синхронизируем CSV..." : "Импортируем CSV...");
 
         SpotifyImportService.Progress progressCallback = (done, total, message) -> main.post(() -> {
             if (total > 0) {
@@ -1117,6 +1327,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
             @Override
             public void onDone(SpotifyImportService.Result result) {
                 main.post(() -> {
+                    cancelRequested = false;
                     running = false;
                     hideProgress();
                     Toast.makeText(SpotifyImportActivity.this, result.summary(), Toast.LENGTH_LONG).show();
@@ -1128,8 +1339,13 @@ public class SpotifyImportActivity extends AppCompatActivity {
             @Override
             public void onError(Throwable error) {
                 main.post(() -> {
+                    boolean canceled = cancelRequested;
+                    cancelRequested = false;
                     running = false;
                     hideProgress();
+                    if (canceled) {
+                        return;
+                    }
                     Toast.makeText(
                             SpotifyImportActivity.this,
                             "Ошибка: " + message(error),
@@ -1139,11 +1355,11 @@ public class SpotifyImportActivity extends AppCompatActivity {
             }
         };
 
-        executor.execute(() -> {
+        currentTask = executor.submit(() -> {
             if (sync) {
-                SpotifyImportService.syncTracks(this, finalKey, finalName, parsed.tracks, progressCallback, callback);
+                SpotifyImportService.syncTracks(this, finalKey, finalName, parsed.tracks, source, progressCallback, callback);
             } else {
-                SpotifyImportService.importTracks(this, finalKey, finalName, parsed.tracks, progressCallback, callback);
+                SpotifyImportService.importTracks(this, finalKey, finalName, parsed.tracks, source, progressCallback, callback);
             }
         });
     }
@@ -1206,7 +1422,8 @@ public class SpotifyImportActivity extends AppCompatActivity {
 
     private void start(SpotifyPlaylist playlist, boolean sync) {
         running = true;
-        showProgress(sync ? "Синхронизируем..." : "Импортируем...");
+        cancelRequested = false;
+        showImportProgress(sync ? "Синхронизируем..." : "Импортируем...");
 
         SpotifyImportService.Progress progressCallback = (done, total, message) -> main.post(() -> {
             if (total > 0) {
@@ -1219,6 +1436,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
             @Override
             public void onDone(SpotifyImportService.Result result) {
                 main.post(() -> {
+                    cancelRequested = false;
                     running = false;
                     hideProgress();
                     Toast.makeText(SpotifyImportActivity.this, result.summary(), Toast.LENGTH_LONG).show();
@@ -1230,8 +1448,13 @@ public class SpotifyImportActivity extends AppCompatActivity {
             @Override
             public void onError(Throwable error) {
                 main.post(() -> {
+                    boolean canceled = cancelRequested;
+                    cancelRequested = false;
                     running = false;
                     hideProgress();
+                    if (canceled) {
+                        return;
+                    }
                     Toast.makeText(
                             SpotifyImportActivity.this,
                             "Ошибка: " + message(error),
@@ -1241,7 +1464,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
             }
         };
 
-        executor.execute(() -> {
+        currentTask = executor.submit(() -> {
             if (sync) {
                 SpotifyImportService.syncPlaylist(this, playlist, progressCallback, callback);
             } else {
@@ -1272,10 +1495,37 @@ public class SpotifyImportActivity extends AppCompatActivity {
         footer.setVisibility(View.VISIBLE);
         progress.setProgress(0);
         status.setText(message);
+        if (cancelButton != null) {
+            cancelButton.setVisibility(View.GONE);
+        }
+    }
+
+    private void showImportProgress(String message) {
+        showProgress(message);
+        if (cancelButton != null) {
+            cancelButton.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void cancelImport() {
+        if (!running) {
+            return;
+        }
+        cancelRequested = true;
+        Future<?> task = currentTask;
+        if (task != null) {
+            task.cancel(true);
+        }
+        running = false;
+        hideProgress();
+        Toast.makeText(this, "Отмена: прогресс сохранён", Toast.LENGTH_SHORT).show();
     }
 
     private void hideProgress() {
         footer.setVisibility(View.GONE);
+        if (cancelButton != null) {
+            cancelButton.setVisibility(View.GONE);
+        }
         updatePausedJobs();
     }
 
@@ -1283,14 +1533,14 @@ public class SpotifyImportActivity extends AppCompatActivity {
         if (pausedJobs == null) {
             return;
         }
-        int count = new ImportProgressDb(this).paused(AccountManagerUtils.getUserId()).size();
+        int count = ImportProgressDb.get(this).paused(AccountManagerUtils.getUserId()).size();
         pausedJobs.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
         pausedJobs.setText(count > 0 ? "Прервано: " + count : "Прервано");
     }
 
     private void showPausedJobs() {
         List<ImportProgressDb.PausedJob> jobs =
-                new ImportProgressDb(this).paused(AccountManagerUtils.getUserId());
+                ImportProgressDb.get(this).paused(AccountManagerUtils.getUserId());
         if (jobs.isEmpty()) {
             updatePausedJobs();
             Toast.makeText(this, "Нет прерванных импортов", Toast.LENGTH_SHORT).show();
@@ -1317,11 +1567,11 @@ public class SpotifyImportActivity extends AppCompatActivity {
                     if (which == 0) {
                         resumeJob(job);
                     } else if (which == 1) {
-                        new ImportProgressDb(this).retryMisses(
+                        ImportProgressDb.get(this).retryMisses(
                                 AccountManagerUtils.getUserId(), job.key);
                         Toast.makeText(this, "Ненайденные будут искать снова", Toast.LENGTH_SHORT).show();
                     } else {
-                        new ImportProgressDb(this).clear(AccountManagerUtils.getUserId(), job.key);
+                        ImportProgressDb.get(this).clear(AccountManagerUtils.getUserId(), job.key);
                         updatePausedJobs();
                     }
                 })
@@ -1334,17 +1584,99 @@ public class SpotifyImportActivity extends AppCompatActivity {
             Toast.makeText(this, "Дождитесь завершения операции", Toast.LENGTH_SHORT).show();
             return;
         }
+        // BUG-26: legacy row-based item keys cannot be matched to the new stable keys. Warn instead
+        // of silently re-searching; already added VK uids are still de-duplicated.
+        try {
+            if (ImportProgressDb.get(this).hasLegacyItems(
+                    AccountManagerUtils.getUserId(), job.key)) {
+                Toast.makeText(this,
+                        "Импорт сохранён в старом формате: часть треков будет найдена заново, "
+                                + "уже добавленные не дублируются",
+                        Toast.LENGTH_LONG).show();
+            }
+        } catch (Throwable ignored) {
+        }
         if (job.key != null && job.key.startsWith("csv:")) {
-            pickCsv(job.key, jobLabel(job));
+            resumeCsv(job);
             return;
         }
         if (job.key != null && job.key.startsWith("local")) {
-            Toast.makeText(this,
-                    "Запустите импорт «" + jobLabel(job) + "» заново — прогресс сохранён",
-                    Toast.LENGTH_LONG).show();
+            resumeLocal(job);
             return;
         }
         start(new SpotifyPlaylist(job.key, jobLabel(job), "", "", 0, ""), true);
+    }
+
+    /** BUG-37: resume CSV from the persisted URI without asking for the file again. */
+    private void resumeCsv(ImportProgressDb.PausedJob job) {
+        String source = job.source;
+        if (source != null && (source.startsWith("content:") || source.startsWith("file:"))) {
+            final String finalSource = source;
+            showProgress("Читаем CSV...");
+            executor.execute(() -> {
+                try (InputStream input = getContentResolver().openInputStream(Uri.parse(finalSource))) {
+                    if (input == null) {
+                        throw new IllegalStateException("Не удалось открыть CSV");
+                    }
+                    CsvPlaylistParser.Result parsed =
+                            CsvPlaylistParser.parse(displayName(Uri.parse(finalSource)), input);
+                    main.post(() -> startCsv(parsed, job.key, jobLabel(job), finalSource));
+                } catch (Throwable error) {
+                    main.post(() -> {
+                        hideProgress();
+                        Toast.makeText(this,
+                                "Не удалось открыть CSV: " + message(error),
+                                Toast.LENGTH_LONG).show();
+                        pickCsv(job.key, jobLabel(job));
+                    });
+                }
+            });
+            return;
+        }
+        pickCsv(job.key, jobLabel(job));
+    }
+
+    /** BUG-37: resume local import from the saved SAF folder (or default Music/Download). */
+    private void resumeLocal(ImportProgressDb.PausedJob job) {
+        String source = job.source;
+        if (source == null || source.isEmpty()) {
+            source = Preferences.getString(PREF_LOCAL_TREE);
+        }
+        final String finalSource = source == null || source.isEmpty() ? "media" : source;
+
+        running = true;
+        showProgress("Ищем аудиофайлы...");
+        executor.execute(() -> {
+            try {
+                List<SpotifyTrack> tracks;
+                String label;
+                if ("media".equals(finalSource)) {
+                    tracks = LocalMusicScanner.scan(this, LocalMusicScanner.defaultFolder());
+                    label = "Music/ и Download/";
+                } else {
+                    Uri uri = Uri.parse(finalSource);
+                    tracks = LocalMusicScanner.scanTree(this, uri);
+                    label = folderName(uri);
+                }
+                main.post(() -> {
+                    if (tracks.isEmpty()) {
+                        running = false;
+                        hideProgress();
+                        Toast.makeText(this, "В " + label + " нет аудиофайлов",
+                                Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    runLocalImport(tracks, true, job.ownerId, job.playlistId, finalSource);
+                });
+            } catch (Throwable error) {
+                main.post(() -> {
+                    running = false;
+                    hideProgress();
+                    Toast.makeText(this, "Ошибка сканирования: " + message(error),
+                            Toast.LENGTH_LONG).show();
+                });
+            }
+        });
     }
 
     private static String jobLabel(ImportProgressDb.PausedJob job) {

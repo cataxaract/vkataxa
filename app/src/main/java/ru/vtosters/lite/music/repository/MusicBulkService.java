@@ -10,6 +10,7 @@ import androidx.core.app.NotificationManagerCompat;
 
 import com.vk.api.audio.AudioAddToPlaylist;
 import com.vk.api.audio.AudioDelete;
+import com.vk.api.audio.AudioRemoveFromPlaylist;
 import com.vk.api.base.ApiCallback;
 import com.vk.api.sdk.exceptions.VKApiExecutionException;
 import com.vk.dto.music.MusicTrack;
@@ -44,6 +45,7 @@ public final class MusicBulkService {
     public enum Action {
         ADD_TO_PLAYLIST,
         REMOVE_FROM_MY_MUSIC,
+        REMOVE_FROM_PLAYLIST,
         DOWNLOAD,
         CACHE
     }
@@ -84,7 +86,8 @@ public final class MusicBulkService {
         if (tracks == null || tracks.isEmpty() || action == null) {
             return false;
         }
-        if (action == Action.ADD_TO_PLAYLIST && parsePlaylistId(playlistId) == null) {
+        if ((action == Action.ADD_TO_PLAYLIST || action == Action.REMOVE_FROM_PLAYLIST)
+                && parsePlaylistId(playlistId) == null) {
             return false;
         }
 
@@ -123,6 +126,8 @@ public final class MusicBulkService {
                 return "Добавление в плейлист";
             case REMOVE_FROM_MY_MUSIC:
                 return "Удаление из моей музыки";
+            case REMOVE_FROM_PLAYLIST:
+                return "Удаление из плейлиста";
             case DOWNLOAD:
                 return "Скачивание выбранных треков";
             case CACHE:
@@ -366,6 +371,13 @@ public final class MusicBulkService {
                         removeFromMyMusic(track);
                         MusicRepositoryImpl.instance().markUnliked(track);
                         break;
+                    case REMOVE_FROM_PLAYLIST:
+                        int[] ids = parsePlaylistId(playlistId);
+                        if (ids == null) {
+                            throw new IllegalStateException("playlist id");
+                        }
+                        removeFromPlaylist(track, ids[0], ids[1]);
+                        break;
                     case CACHE:
                         download(track, true);
                         MusicRepositoryImpl.instance().invalidateCache();
@@ -391,6 +403,30 @@ public final class MusicBulkService {
                 .a(new ApiCallback<Boolean>() {
                     @Override
                     public void a(Boolean result) {
+                        latch.countDown();
+                    }
+
+                    @Override
+                    public void a(VKApiExecutionException e) {
+                        error.set(e);
+                        latch.countDown();
+                    }
+                })
+                .a();
+        await(latch, error);
+    }
+
+    private static void removeFromPlaylist(MusicTrack track, int ownerId, int playlistId) throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<VKApiExecutionException> error = new AtomicReference<>();
+        AudioRemoveFromPlaylist.b builder = new AudioRemoveFromPlaylist.b()
+                .a(ownerId)
+                .b(playlistId);
+        builder.a(track);
+        builder.a()
+                .a(new ApiCallback() {
+                    @Override
+                    public void a(Object result) {
                         latch.countDown();
                     }
 

@@ -91,7 +91,7 @@ public final class SpotifyImportService {
     public static void importPlaylist(Context context, SpotifyPlaylist playlist, Progress progress, Callback callback) {
         try {
             List<SpotifyTrack> tracks = SpotifyApi.getPlaylistTracks(context, playlist.id);
-            importTracks(context, playlist.id, playlist.name, tracks, progress, callback);
+            importTracks(context, playlist.id, playlist.name, tracks, null, progress, callback);
         } catch (Throwable error) {
             callback.onError(error);
         }
@@ -106,7 +106,7 @@ public final class SpotifyImportService {
 
         try {
             List<SpotifyTrack> tracks = SpotifyApi.getPlaylistTracks(context, playlist.id);
-            syncTracks(context, playlist.id, playlist.name, tracks, progress, callback);
+            syncTracks(context, playlist.id, playlist.name, tracks, null, progress, callback);
         } catch (Throwable error) {
             callback.onError(error);
         }
@@ -117,6 +117,7 @@ public final class SpotifyImportService {
             String key,
             String playlistName,
             List<SpotifyTrack> spotifyTracks,
+            String source,
             Progress progress,
             Callback callback
     ) {
@@ -130,7 +131,7 @@ public final class SpotifyImportService {
                 throw new IllegalStateException("VK is not authorized");
             }
 
-            ImportProgressDb progressDb = new ImportProgressDb(context);
+            ImportProgressDb progressDb = ImportProgressDb.get(context);
             ImportProgressDb.Job saved = progressDb.get(ownerId, key);
             if (saved != null && saved.status != null
                     && (saved.status.contains("captcha") || saved.status.contains("flood"))) {
@@ -144,6 +145,7 @@ public final class SpotifyImportService {
                 targetOwner = saved.ownerId;
                 targetPlaylist = saved.playlistId;
                 result.created = false;
+                progressDb.saveTarget(targetOwner, key, targetOwner, targetPlaylist, "matching", source);
             } else {
                 Playlist created = VkPlaylistApi.createPlaylist(
                         ownerId,
@@ -153,7 +155,7 @@ public final class SpotifyImportService {
                 );
                 targetOwner = ownerId;
                 targetPlaylist = created.a;
-                progressDb.saveTarget(targetOwner, key, targetOwner, targetPlaylist, "matching");
+                progressDb.saveTarget(targetOwner, key, targetOwner, targetPlaylist, "matching", source);
                 result.created = true;
             }
             progressDb.setLabel(ownerId, key, playlistName);
@@ -237,14 +239,15 @@ public final class SpotifyImportService {
             boolean onlyNew,
             int targetOwner,
             int targetPlaylist,
+            String source,
             Progress progress,
             Callback callback
     ) {
         if (targetPlaylist == 0) {
-            importLocalMusic(context, localTracks, onlyNew, progress, callback);
+            importLocalMusic(context, localTracks, onlyNew, source, progress, callback);
             return;
         }
-        importLocalToPlaylist(context, localTracks, targetOwner, targetPlaylist, progress, callback);
+        importLocalToPlaylist(context, localTracks, targetOwner, targetPlaylist, source, progress, callback);
     }
 
     private static void importLocalToPlaylist(
@@ -252,18 +255,20 @@ public final class SpotifyImportService {
             List<SpotifyTrack> localTracks,
             int targetOwner,
             int targetPlaylist,
+            String source,
             Progress progress,
             Callback callback
     ) {
+        String key = localJobKey(targetOwner, targetPlaylist, source);
         CaptchaImageLoader.setAutoCancelPlaceholder(true);
         try {
             int account = VkPlaylistApi.currentUserId();
             if (account == 0) {
                 throw new IllegalStateException("VK is not authorized");
             }
-            String key = "local:" + targetOwner + "_" + targetPlaylist;
-            ImportProgressDb progressDb = new ImportProgressDb(context);
-            progressDb.saveTarget(account, key, targetOwner, targetPlaylist, "matching");
+            ImportProgressDb progressDb = ImportProgressDb.get(context);
+            migrateLocalKey(progressDb, account, targetOwner, targetPlaylist, key);
+            progressDb.saveTarget(account, key, targetOwner, targetPlaylist, "matching", source);
             progressDb.setLabel(account, key, "Локальная музыка");
             Set<String> targetUids = readTargetUids(targetOwner, targetPlaylist);
             progressDb.touch(account, key);
@@ -288,7 +293,7 @@ public final class SpotifyImportService {
             callback.onDone(result);
         } catch (Throwable error) {
             logImportError("local-playlist", error);
-            markImportStatus(context, "local:" + targetOwner + "_" + targetPlaylist, error);
+            markImportStatus(context, key, error);
             callback.onError(error);
         } finally {
             CaptchaImageLoader.setAutoCancelPlaceholder(false);
@@ -299,28 +304,34 @@ public final class SpotifyImportService {
             Context context,
             List<SpotifyTrack> localTracks,
             boolean onlyNew,
+            String source,
             Progress progress,
             Callback callback
     ) {
+        int account = VkPlaylistApi.currentUserId();
+        String key = localJobKey(account, 0, source);
         CaptchaImageLoader.setAutoCancelPlaceholder(true);
         try {
+            if (account == 0) {
+                throw new IllegalStateException("VK is not authorized");
+            }
             Result result = new Result();
             result.localImport = true;
-            int account = VkPlaylistApi.currentUserId();
-            ImportProgressDb progressDb = new ImportProgressDb(context);
-            Set<String> alreadyAdded = progressDb.added(account, "local");
-            progressDb.saveTarget(account, "local", account, 0, "adding");
-            progressDb.setLabel(account, "local", "Локальная музыка");
+            ImportProgressDb progressDb = ImportProgressDb.get(context);
+            migrateLocalKey(progressDb, account, account, 0, key);
+            Set<String> alreadyAdded = progressDb.added(account, key);
+            progressDb.saveTarget(account, key, account, 0, "adding", source);
+            progressDb.setLabel(account, key, "Локальная музыка");
 
             progress.onProgress(0, localTracks.size(), "Сверяем с «Моей музыкой»...");
             List<MusicTrack> myMusic = VkPlaylistApi.getMyMusic();
-            progressDb.touch(account, "local");
+            progressDb.touch(account, key);
             Set<String> existing = new HashSet<>();
             Map<String, List<MusicTrack>> byTitle = new HashMap<>();
             for (MusicTrack track : myMusic) {
                 existing.add(track.y1());
                 if (track.f != null) {
-                    byTitle.computeIfAbsent(TrackMatcher.normalize(track.f), key -> new ArrayList<>())
+                    byTitle.computeIfAbsent(TrackMatcher.normalize(track.f), titleKey -> new ArrayList<>())
                             .add(track);
                 }
             }
@@ -346,8 +357,8 @@ public final class SpotifyImportService {
             if (!toSearch.isEmpty()) {
                 Result searchResult = new Result();
                 matches.addAll(matchTracks(toSearch, progress, searchResult,
-                        progressDb, account, "local", batch -> addLocalMatchesImmediately(
-                                account, progressDb, batch, targetUids, alreadyAdded, addedNow)));
+                        progressDb, account, key, batch -> addLocalMatchesImmediately(
+                                account, progressDb, key, batch, targetUids, alreadyAdded, addedNow)));
                 result.notFound = searchResult.notFound;
                 result.notFoundTracks.addAll(searchResult.notFoundTracks);
             }
@@ -363,7 +374,7 @@ public final class SpotifyImportService {
                 boolean inMyMusic = existing.contains(uid) || targetUids.contains(uid);
                 if (inMyMusic || alreadyAdded.contains(uid)) {
                     if (inMyMusic) {
-                        progressDb.markAdded(account, "local",
+                        progressDb.markAdded(account, key,
                                 uidToItem.getOrDefault(uid, uid), uid);
                     }
                     result.skipped++;
@@ -384,13 +395,16 @@ public final class SpotifyImportService {
                         continue;
                     }
                     String item = uidToItem.getOrDefault(uid, uid);
-                    progressDb.saveIntent(account, "local", item, track);
+                    progressDb.saveIntent(account, key, item, track);
                     VkPlaylistApi.addToMyMusic(track);
-                    progressDb.markAdded(account, "local", item, uid);
-                    progressDb.touch(account, "local");
+                    progressDb.markAdded(account, key, item, uid);
+                    progressDb.touch(account, key);
                     targetUids.add(uid);
                     added++;
                 } catch (Throwable error) {
+                    if (error instanceof InterruptedException) {
+                        throw error;
+                    }
                     if (isCaptchaError(error) || isFloodError(error) || isBudgetError(error)) {
                         throw error;
                     }
@@ -402,11 +416,11 @@ public final class SpotifyImportService {
             result.added = addedNow.size() + added;
             Log.d(TAG, "local import: added=" + result.added + " skipped=" + result.skipped
                     + " failed=" + result.failed + " notFound=" + result.notFound);
-            progressDb.clear(account, "local");
+            progressDb.clear(account, key);
             callback.onDone(result);
         } catch (Throwable error) {
             logImportError("local", error);
-            markImportStatus(context, "local", error);
+            markImportStatus(context, key, error);
             callback.onError(error);
         } finally {
             CaptchaImageLoader.setAutoCancelPlaceholder(false);
@@ -418,12 +432,13 @@ public final class SpotifyImportService {
             String key,
             String playlistName,
             List<SpotifyTrack> spotifyTracks,
+            String source,
             Progress progress,
             Callback callback
     ) {
         SpotifySyncStore.Entry existing = SpotifySyncStore.get(context, key);
         if (existing == null || !existing.valid()) {
-            importTracks(context, key, playlistName, spotifyTracks, progress, callback);
+            importTracks(context, key, playlistName, spotifyTracks, source, progress, callback);
             return;
         }
 
@@ -436,7 +451,10 @@ public final class SpotifyImportService {
 
             int ownerId = existing.vkOwnerId;
             int playlistId = existing.vkPlaylistId;
-            ImportProgressDb progressDb = new ImportProgressDb(context);
+            ImportProgressDb progressDb = ImportProgressDb.get(context);
+            // BUG-37: a sync can be interrupted too; keep its source and progress resumable.
+            progressDb.saveTarget(ownerId, key, ownerId, playlistId, "matching", source);
+            progressDb.setLabel(ownerId, key, playlistName);
 
             List<Match> matches = matchTracks(spotifyTracks, progress, result,
                     progressDb, ownerId, key);
@@ -487,6 +505,8 @@ public final class SpotifyImportService {
 
             result.added = toAdd.size();
             result.removed = toRemove.size();
+            // A successful sync must not leave a stale "matching" job in paused().
+            progressDb.clear(ownerId, key);
             callback.onDone(result);
         } catch (Throwable error) {
             logImportError("sync", error);
@@ -691,6 +711,34 @@ public final class SpotifyImportService {
         return false;
     }
 
+    /** BUG-25: local progress is scoped by the selected source (SAF tree or default MediaStore). */
+    static String localJobKey(int targetOwner, int targetPlaylist, String source) {
+        String src = localSourceKey(source);
+        return targetPlaylist == 0
+                ? "local:music:" + src
+                : "local:" + targetOwner + "_" + targetPlaylist + ":" + src;
+    }
+
+    static String localSourceKey(String source) {
+        if (source == null || source.isEmpty() || "media".equals(source)) {
+            return "media";
+        }
+        return "tree:" + sha1(source);
+    }
+
+    private static void migrateLocalKey(
+            ImportProgressDb progressDb,
+            int account,
+            int targetOwner,
+            int targetPlaylist,
+            String newKey
+    ) {
+        String legacy = targetPlaylist == 0
+                ? "local"
+                : "local:" + targetOwner + "_" + targetPlaylist;
+        progressDb.renameKey(account, legacy, newKey);
+    }
+
     private static String itemKey(SpotifyTrack track) {
         if (track == null) {
             return "";
@@ -725,7 +773,7 @@ public final class SpotifyImportService {
                     ? "paused_captcha"
                     : isFloodError(error) ? "paused_flood"
                     : isBudgetError(error) ? "paused_budget" : "paused";
-            new ImportProgressDb(context).setStatus(VkPlaylistApi.currentUserId(), key, status);
+            ImportProgressDb.get(context).setStatus(VkPlaylistApi.currentUserId(), key, status);
         } catch (Throwable ignored) {
         }
     }
@@ -767,6 +815,7 @@ public final class SpotifyImportService {
     private static void addLocalMatchesImmediately(
             int account,
             ImportProgressDb progressDb,
+            String key,
             List<Match> matches,
             Set<String> targetUids,
             Set<String> alreadyAdded,
@@ -778,13 +827,13 @@ public final class SpotifyImportService {
                 continue;
             }
             String item = itemKey(match.spotify);
-            progressDb.saveIntent(account, "local", item, match.track);
+            progressDb.saveIntent(account, key, item, match.track);
             VkPlaylistApi.addToMyMusic(match.track);
-            progressDb.markAdded(account, "local", item, uid);
+            progressDb.markAdded(account, key, item, uid);
             targetUids.add(uid);
             addedNow.add(match.track);
         }
-        progressDb.touch(account, "local");
+        progressDb.touch(account, key);
     }
 
     private static void addMatchesImmediately(

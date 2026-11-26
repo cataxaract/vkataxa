@@ -1,17 +1,25 @@
 package ru.vtosters.lite.ui.fragments;
 
 import android.annotation.SuppressLint;
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
+import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
+
+import androidx.appcompat.app.AlertDialog;
+
 import bruhcollective.itaysonlab.libvkx.client.LibVKXClient;
 import com.vk.core.dialogs.alert.VkAlertDialog;
+import com.vk.dto.music.MusicTrack;
 import com.vk.dto.music.Playlist;
 import com.vtosters.lite.ui.SummaryListPreference;
 import ru.vtosters.hooks.other.Preferences;
@@ -19,6 +27,8 @@ import ru.vtosters.hooks.other.ThemesUtils;
 import ru.vtosters.lite.core.flags.FeatureFlags;
 import ru.vtosters.lite.downloaders.AudioDownloader;
 import ru.vtosters.lite.music.LastFMScrobbler;
+import ru.vtosters.lite.music.repository.MusicBulkService;
+import ru.vtosters.lite.music.spotify.MusicDedupe;
 import ru.vtosters.lite.music.spotify.SpotifyImportActivity;
 import ru.vtosters.lite.core.music.MusicRepository;
 import ru.vtosters.lite.music.repository.MusicRepositoryImpl;
@@ -26,8 +36,12 @@ import ru.vtosters.lite.ui.PreferenceFragmentUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
 import ru.vtosters.lite.utils.LifecycleUtils;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -61,6 +75,21 @@ public class MusicFragment extends TrackedMaterialPreferenceToolbarFragment {
                     null,
                     preference -> {
                         showSortDialog();
+                        return true;
+                    }
+            );
+        }
+
+        // TEMP-UI(MU-14): read-only отчёт о повторах; удалить после редизайна.
+        if (FeatureFlags.isEnabled(FeatureFlags.Flag.MUSIC_DEDUPE)) {
+            PreferenceFragmentUtils.addPreference(
+                    getPreferenceScreen(),
+                    "music_dedupe",
+                    "Поиск повторов",
+                    "Моя музыка и плейлисты — только отчёт",
+                    null,
+                    preference -> {
+                        runDedupe();
                         return true;
                     }
             );
@@ -445,6 +474,257 @@ public class MusicFragment extends TrackedMaterialPreferenceToolbarFragment {
                 )
                 .setView(linearLayout)
                 .show();
+    }
+
+    // TEMP-UI(MU-14): read-only отчёт; удалить после редизайна.
+    private void runDedupe() {
+        Context ctx = requireContext();
+        Activity activity = requireActivity();
+        AndroidUtils.sendToast("Ищем повторы...");
+        executor.submit(() -> {
+            try {
+                MusicDedupe.Report report = MusicDedupe.scan();
+                activity.runOnUiThread(() -> {
+                    if (!activity.isFinishing()) {
+                        showDedupeSelection(ctx, report);
+                    }
+                });
+            } catch (Throwable error) {
+                activity.runOnUiThread(() -> {
+                    if (!activity.isFinishing()) {
+                        AndroidUtils.sendToast("Ошибка поиска повторов: " + error.getMessage());
+                    }
+                });
+            }
+        });
+    }
+
+    // TEMP-UI(MU-14/MU-13): выбор и удаление похожих; удалить после редизайна.
+    private void showDedupeSelection(Context ctx, MusicDedupe.Report report) {
+        int similarTotal = 0;
+        for (MusicDedupe.Section section : report.sections) {
+            similarTotal += section.similarGroups();
+        }
+
+        if (similarTotal == 0) {
+            new VkAlertDialog.Builder(ctx)
+                    .setTitle("Поиск повторов")
+                    .setMessage(report.toText())
+                    .setPositiveButton("Закрыть", null)
+                    .show();
+            return;
+        }
+
+        List<DedupeSelection> selections = new ArrayList<>();
+        LinearLayout content = new LinearLayout(ctx);
+        content.setOrientation(LinearLayout.VERTICAL);
+        int padding = Math.round(AndroidUtils.dp2px(16));
+        content.setPadding(padding, padding, padding, padding);
+
+        TextView summary = new TextView(ctx);
+        summary.setText("Похожих групп: " + similarTotal + ".\n"
+                + "Отметь треки, которые нужно удалить; по умолчанию ничего не выбрано.\n"
+                + "В «Моей музыке» снимается лайк, в плейлистах трек убирается из плейлиста.");
+        summary.setTextSize(13);
+        summary.setTextColor(getTextAttr());
+        content.addView(summary);
+
+        Button delete = new Button(ctx);
+        delete.setAllCaps(false);
+        delete.setText("Удалить выбранные (0)");
+        delete.setTextColor(getTextAttr());
+
+        final AlertDialog[] dialogRef = new AlertDialog[1];
+        Runnable updateCount = () -> {
+            int count = 0;
+            for (DedupeSelection selection : selections) {
+                if (selection.selected) {
+                    count++;
+                }
+            }
+            delete.setText("Удалить выбранные (" + count + ")");
+        };
+
+        for (MusicDedupe.Section section : report.sections) {
+            if (section.similar.isEmpty()) {
+                continue;
+            }
+            TextView header = new TextView(ctx);
+            header.setText(section.name + " · " + section.similarGroups() + " похожих групп");
+            header.setTextSize(15);
+            header.setTextColor(getTextAttr());
+            header.setTypeface(null, android.graphics.Typeface.BOLD);
+            header.setPadding(0, Math.round(AndroidUtils.dp2px(12)), 0,
+                    Math.round(AndroidUtils.dp2px(4)));
+            content.addView(header);
+
+            for (MusicDedupe.Group group : section.similar) {
+                TextView groupTitle = new TextView(ctx);
+                groupTitle.setText(MusicDedupe.display(group.tracks.get(0))
+                        + " · " + group.tracks.size() + " шт.");
+                groupTitle.setTextSize(13);
+                groupTitle.setTextColor(getTextAttr());
+                groupTitle.setPadding(0, Math.round(AndroidUtils.dp2px(6)), 0, 0);
+                content.addView(groupTitle);
+
+                for (MusicTrack track : group.tracks) {
+                    CheckBox check = new CheckBox(ctx);
+                    check.setText(MusicDedupe.display(track) + " · " + duration(track)
+                            + " · id " + track.y1());
+                    check.setTextSize(13);
+                    check.setTextColor(getTextAttr());
+                    DedupeSelection selection = new DedupeSelection(section, track);
+                    selections.add(selection);
+                    check.setOnCheckedChangeListener((button, checked) -> {
+                        selection.selected = checked;
+                        updateCount.run();
+                    });
+                    content.addView(check);
+                }
+            }
+        }
+
+        ScrollView scroll = new ScrollView(ctx);
+        scroll.addView(content);
+
+        LinearLayout root = new LinearLayout(ctx);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.addView(scroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        root.addView(delete, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        root.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Math.round(ctx.getResources().getDisplayMetrics().heightPixels * 0.6f)));
+
+        final AlertDialog dialog = new VkAlertDialog.Builder(ctx)
+                .setTitle("Поиск повторов")
+                .setView(root)
+                .setNegativeButton("Закрыть", null)
+                .show();
+        dialogRef[0] = dialog;
+        delete.setOnClickListener(v -> {
+            List<DedupeSelection> chosen = new ArrayList<>();
+            for (DedupeSelection selection : selections) {
+                if (selection.selected) {
+                    chosen.add(selection);
+                }
+            }
+            if (chosen.isEmpty()) {
+                AndroidUtils.sendToast("Ничего не выбрано");
+                return;
+            }
+            confirmDedupeDelete(ctx, chosen, dialogRef[0]);
+        });
+    }
+
+    private void confirmDedupeDelete(Context ctx, List<DedupeSelection> chosen,
+                                     AlertDialog selectionDialog) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (DedupeSelection selection : chosen) {
+            String name = selection.section.myMusic
+                    ? "Моя музыка" : "Плейлист " + selection.section.name;
+            counts.merge(name, 1, Integer::sum);
+        }
+        StringBuilder message = new StringBuilder("Будет удалено ")
+                .append(chosen.size()).append(" трек(ов):\n");
+        for (Map.Entry<String, Integer> entry : counts.entrySet()) {
+            message.append("• ").append(entry.getKey()).append(": ")
+                    .append(entry.getValue()).append('\n');
+        }
+        message.append("\nВ «Моей музыке» снимается лайк, в плейлистах трек убирается из плейлиста.")
+                .append("\nДействие необратимо; разные версии/ремастеры не определяются автоматически.");
+
+        new VkAlertDialog.Builder(ctx)
+                .setTitle("Удалить выбранные?")
+                .setMessage(message.toString())
+                .setPositiveButton("Удалить", (dialog, which) -> {
+                    if (selectionDialog != null) {
+                        selectionDialog.dismiss();
+                    }
+                    startDedupeDeletion(ctx, chosen);
+                })
+                .setNegativeButton("Отмена", null)
+                .show();
+    }
+
+    private void startDedupeDeletion(Context ctx, List<DedupeSelection> chosen) {
+        Map<MusicDedupe.Section, DeleteGroup> grouped = new LinkedHashMap<>();
+        for (DedupeSelection selection : chosen) {
+            DeleteGroup group = grouped.get(selection.section);
+            if (group == null) {
+                group = new DeleteGroup(selection.section);
+                grouped.put(selection.section, group);
+            }
+            group.tracks.add(selection.track);
+        }
+        List<DeleteGroup> groups = new ArrayList<>(grouped.values());
+        AndroidUtils.sendToast("Удаляем выбранные треки...");
+        runDedupeDeleteGroup(ctx, groups, 0, 0, 0);
+    }
+
+    private void runDedupeDeleteGroup(Context ctx, List<DeleteGroup> groups,
+                                      int index, int okTotal, int failedTotal) {
+        if (index >= groups.size()) {
+            AndroidUtils.sendToast("Удалено: " + okTotal + ", ошибок: " + failedTotal);
+            return;
+        }
+        DeleteGroup group = groups.get(index);
+        MusicBulkService.Action action = group.section.myMusic
+                ? MusicBulkService.Action.REMOVE_FROM_MY_MUSIC
+                : MusicBulkService.Action.REMOVE_FROM_PLAYLIST;
+        String playlistId = group.section.myMusic
+                ? null : group.section.ownerId + "_" + group.section.playlistId;
+        boolean started = MusicBulkService.start(group.tracks, action, playlistId,
+                new MusicBulkService.Listener() {
+                    @Override
+                    public void onProgress(int done, int total) {
+                    }
+
+                    @Override
+                    public void onFinished(int ok, int failed, boolean canceled, boolean captcha) {
+                        if (captcha) {
+                            AndroidUtils.sendToast(
+                                    "Captcha: удаление остановлено, повторите позже");
+                            return;
+                        }
+                        if (canceled) {
+                            AndroidUtils.sendToast("Удаление отменено");
+                            return;
+                        }
+                        runDedupeDeleteGroup(ctx, groups, index + 1,
+                                okTotal + ok, failedTotal + failed);
+                    }
+                });
+        if (!started) {
+            AndroidUtils.sendToast("Дождитесь завершения другой операции");
+        }
+    }
+
+    private static String duration(MusicTrack track) {
+        int seconds = Math.max(0, track.h);
+        return String.format(Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60);
+    }
+
+    private static final class DedupeSelection {
+        final MusicDedupe.Section section;
+        final MusicTrack track;
+        boolean selected;
+
+        DedupeSelection(MusicDedupe.Section section, MusicTrack track) {
+            this.section = section;
+            this.track = track;
+        }
+    }
+
+    private static final class DeleteGroup {
+        final MusicDedupe.Section section;
+        final List<MusicTrack> tracks = new ArrayList<>();
+
+        DeleteGroup(MusicDedupe.Section section) {
+            this.section = section;
+        }
     }
 
     private void showSortDialog() {

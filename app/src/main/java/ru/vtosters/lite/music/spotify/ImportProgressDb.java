@@ -17,6 +17,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * MU-10: persistent import journal. Matching results, target playlist and added VK ids are stored
@@ -25,10 +26,16 @@ import java.util.Set;
 final class ImportProgressDb extends SQLiteOpenHelper {
 
     private static final String DB_NAME = "music_import.db";
-    private static final int DB_VERSION = 4;
+    private static final int DB_VERSION = 5;
+    private static final int CURRENT_ITEM_KEY_VERSION = 1;
     private static final long ACTIVE_STALE_MS = 5L * 60 * 1000;
+    private static final long BUDGET_RETENTION_MS = 24L * 60 * 60 * 1000;
     private static final String TABLE_JOBS = "jobs";
     private static final String TABLE_ITEMS = "items";
+    private static final String TABLE_BUDGET = "budget";
+    private static final AtomicLong BUDGET_GROUP = new AtomicLong(System.currentTimeMillis());
+
+    private static volatile ImportProgressDb instance;
 
     static final class Job {
         final int ownerId;
@@ -52,9 +59,10 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         final int matched;
         final int miss;
         final String label;
+        final String source;
 
         PausedJob(String key, String status, int ownerId, int playlistId,
-                  int total, int added, int matched, int miss, String label) {
+                  int total, int added, int matched, int miss, String label, String source) {
             this.key = key;
             this.status = status;
             this.ownerId = ownerId;
@@ -64,12 +72,31 @@ final class ImportProgressDb extends SQLiteOpenHelper {
             this.matched = matched;
             this.miss = miss;
             this.label = label == null ? "" : label;
+            this.source = source == null ? "" : source;
         }
     }
 
-    ImportProgressDb(Context context) {
+    private ImportProgressDb(Context context) {
         super(context.getApplicationContext(), DB_NAME, null, DB_VERSION);
         setWriteAheadLoggingEnabled(true);
+    }
+
+    /** BUG-29: one helper/connection per process; callers must not create their own instances. */
+    static ImportProgressDb get(Context context) {
+        if (context == null) {
+            throw new IllegalArgumentException("context == null");
+        }
+        ImportProgressDb local = instance;
+        if (local == null) {
+            synchronized (ImportProgressDb.class) {
+                local = instance;
+                if (local == null) {
+                    local = new ImportProgressDb(context.getApplicationContext());
+                    instance = local;
+                }
+            }
+        }
+        return local;
     }
 
     @Override
@@ -82,8 +109,10 @@ final class ImportProgressDb extends SQLiteOpenHelper {
                 + "status TEXT NOT NULL,"
                 + "updated_at INTEGER NOT NULL,"
                 + "label TEXT NOT NULL DEFAULT '',"
+                + "source TEXT NOT NULL DEFAULT '',"
                 + "PRIMARY KEY(account, key))");
         createItems(db);
+        createBudget(db);
     }
 
     @Override
@@ -105,6 +134,27 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         if (oldVersion < 4) {
             db.execSQL("ALTER TABLE " + TABLE_JOBS + " ADD COLUMN label TEXT NOT NULL DEFAULT ''");
         }
+        if (oldVersion < 5) {
+            // BUG-37/BUG-25: remember where the job came from (SAF tree / CSV URI) so it can be
+            // resumed without asking the user to pick the folder/file again.
+            db.execSQL("ALTER TABLE " + TABLE_JOBS + " ADD COLUMN source TEXT NOT NULL DEFAULT ''");
+            // BUG-26: distinguish current stable item keys from the legacy row-based ones.
+            // A v1 database is rebuilt by the block above with the column already present.
+            if (oldVersion >= 2) {
+                db.execSQL("ALTER TABLE " + TABLE_ITEMS + " ADD COLUMN key_version INTEGER NOT NULL DEFAULT 0");
+            }
+            createBudget(db);
+        }
+    }
+
+    @Override
+    public void onOpen(SQLiteDatabase db) {
+        super.onOpen(db);
+        // BUG-29: execSQL in onConfigure crashed on Android 16; rawQuery here is the safe form.
+        try (Cursor cursor = db.rawQuery("PRAGMA busy_timeout=5000", null)) {
+            cursor.moveToFirst();
+        } catch (Throwable ignored) {
+        }
     }
 
     private static void createItems(SQLiteDatabase db) {
@@ -118,8 +168,18 @@ final class ImportProgressDb extends SQLiteOpenHelper {
                 + "attempts INTEGER NOT NULL DEFAULT 0,"
                 + "last_error TEXT NOT NULL DEFAULT '',"
                 + "last_attempt INTEGER NOT NULL DEFAULT 0,"
+                + "key_version INTEGER NOT NULL DEFAULT 0,"
                 + "updated_at INTEGER NOT NULL,"
                 + "PRIMARY KEY(account, key, item_key))");
+    }
+
+    private static void createBudget(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS " + TABLE_BUDGET + " ("
+                + "account INTEGER NOT NULL,"
+                + "added_at INTEGER NOT NULL,"
+                + "group_id INTEGER NOT NULL)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS budget_account_time ON "
+                + TABLE_BUDGET + "(account, added_at)");
     }
 
     Job get(int account, String key) {
@@ -136,16 +196,34 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         return null;
     }
 
-    void saveTarget(int account, String key, int ownerId, int playlistId, String status) {
+    synchronized void saveTarget(int account, String key, int ownerId, int playlistId,
+                                 String status, String source) {
+        long now = System.currentTimeMillis();
         ContentValues values = new ContentValues();
         values.put("account", account);
         values.put("key", key);
         values.put("target_owner", ownerId);
         values.put("target_playlist", playlistId);
         values.put("status", status);
-        values.put("updated_at", System.currentTimeMillis());
-        getWritableDatabase().insertWithOnConflict(
-                TABLE_JOBS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
+        values.put("updated_at", now);
+
+        SQLiteDatabase db = getWritableDatabase();
+        int updated = db.update(
+                TABLE_JOBS, values, "account = ? AND key = ?",
+                new String[]{String.valueOf(account), key});
+        if (updated == 0) {
+            if (source != null) {
+                values.put("source", source);
+            }
+            db.insertWithOnConflict(
+                    TABLE_JOBS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
+        } else if (source != null) {
+            ContentValues src = new ContentValues();
+            src.put("source", source);
+            db.update(
+                    TABLE_JOBS, src, "account = ? AND key = ?",
+                    new String[]{String.valueOf(account), key});
+        }
     }
 
     void setStatus(int account, String key, String status) {
@@ -256,6 +334,7 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         values.put("track_uid", track.y1());
         values.put("state", json.isEmpty() ? "pending" : "matched");
         values.put("track_json", json);
+        values.put("key_version", CURRENT_ITEM_KEY_VERSION);
         values.put("updated_at", System.currentTimeMillis());
         getWritableDatabase().insertWithOnConflict(
                 TABLE_ITEMS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
@@ -273,6 +352,7 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         values.put("track_uid", track.y1());
         values.put("state", json.isEmpty() ? "pending" : "add_intent");
         values.put("track_json", json);
+        values.put("key_version", CURRENT_ITEM_KEY_VERSION);
         values.put("updated_at", System.currentTimeMillis());
         getWritableDatabase().insertWithOnConflict(
                 TABLE_ITEMS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
@@ -289,6 +369,7 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         values.put("attempts", attempts(account, key, itemKey) + 1);
         values.put("last_error", "");
         values.put("last_attempt", System.currentTimeMillis());
+        values.put("key_version", CURRENT_ITEM_KEY_VERSION);
         values.put("updated_at", System.currentTimeMillis());
         getWritableDatabase().insertWithOnConflict(
                 TABLE_ITEMS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
@@ -324,6 +405,7 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         ContentValues values = new ContentValues();
         values.put("state", "added");
         values.put("track_uid", trackUid == null ? "" : trackUid);
+        values.put("key_version", CURRENT_ITEM_KEY_VERSION);
         values.put("updated_at", System.currentTimeMillis());
         int updated = getWritableDatabase().update(
                 TABLE_ITEMS, values, "account = ? AND key = ? AND item_key = ?",
@@ -338,6 +420,44 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         }
     }
 
+    /** BUG-25: rename a legacy local job (e.g. "local") to the source-scoped key. */
+    synchronized void renameKey(int account, String oldKey, String newKey) {
+        if (oldKey == null || newKey == null || oldKey.equals(newKey)) {
+            return;
+        }
+        if (get(account, newKey) != null || get(account, oldKey) == null) {
+            return;
+        }
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            ContentValues job = new ContentValues();
+            job.put("key", newKey);
+            db.update(
+                    TABLE_JOBS, job, "account = ? AND key = ?",
+                    new String[]{String.valueOf(account), oldKey});
+            // OR REPLACE avoids a constraint failure if an orphan item already uses the new key.
+            db.execSQL("UPDATE OR REPLACE " + TABLE_ITEMS + " SET key = ? WHERE account = ? AND key = ?",
+                    new Object[]{newKey, account, oldKey});
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    /** BUG-26: true when the job still has row-based item keys from before the stable-key change. */
+    boolean hasLegacyItems(int account, String key) {
+        try (Cursor cursor = getReadableDatabase().query(
+                TABLE_ITEMS,
+                new String[]{"item_key"},
+                "account = ? AND key = ? AND key_version < ?"
+                        + " AND item_key NOT LIKE 'id:%' AND item_key NOT LIKE 'meta:%'",
+                new String[]{String.valueOf(account), key, String.valueOf(CURRENT_ITEM_KEY_VERSION)},
+                null, null, null, "1")) {
+            return cursor.moveToFirst();
+        }
+    }
+
     List<PausedJob> paused(int account) {
         List<PausedJob> result = new ArrayList<>();
         long now = System.currentTimeMillis();
@@ -346,7 +466,7 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         // BUG-20: a job left in matching/adding after force-stop has no updates; expose it as paused.
         try (Cursor cursor = getReadableDatabase().query(
                 TABLE_JOBS,
-                new String[]{"key", "status", "target_owner", "target_playlist", "label"},
+                new String[]{"key", "status", "target_owner", "target_playlist", "label", "source"},
                 "account = ? AND updated_at >= ? AND (status LIKE 'paused%'"
                         + " OR (status IN (?, ?) AND updated_at < ?))",
                 new String[]{String.valueOf(account), String.valueOf(cutoff),
@@ -363,7 +483,8 @@ final class ImportProgressDb extends SQLiteOpenHelper {
                         count(account, key, "added"),
                         count(account, key, "matched") + count(account, key, "add_intent"),
                         count(account, key, "miss"),
-                        cursor.getString(4)
+                        cursor.getString(4),
+                        cursor.getString(5)
                 ));
             }
         }
@@ -402,6 +523,59 @@ final class ImportProgressDb extends SQLiteOpenHelper {
                 TABLE_JOBS, "account = ? AND key = ?", new String[]{String.valueOf(account), key});
         getWritableDatabase().delete(
                 TABLE_ITEMS, "account = ? AND key = ?", new String[]{String.valueOf(account), key});
+    }
+
+    /**
+     * BUG-27: reserve add quota in SQLite before the request and refund the group on error.
+     * Rows left by a killed process stay counted, which is conservative (never more than the limit).
+     */
+    synchronized long budgetReserve(int account, int count, int limit, long windowMs)
+            throws ImportBudgetExceededException {
+        if (count <= 0) {
+            return 0L;
+        }
+        long now = System.currentTimeMillis();
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            db.delete(TABLE_BUDGET, "added_at < ?",
+                    new String[]{String.valueOf(now - BUDGET_RETENTION_MS)});
+            int used = budgetCountLocked(db, account, now - windowMs);
+            if (used + count > limit) {
+                throw new ImportBudgetExceededException(limit);
+            }
+            long group = BUDGET_GROUP.incrementAndGet();
+            for (int i = 0; i < count; i++) {
+                ContentValues values = new ContentValues();
+                values.put("account", account);
+                values.put("added_at", now);
+                values.put("group_id", group);
+                db.insertOrThrow(TABLE_BUDGET, null, values);
+            }
+            db.setTransactionSuccessful();
+            return group;
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    synchronized void budgetRefund(long group) {
+        if (group == 0L) {
+            return;
+        }
+        getWritableDatabase().delete(
+                TABLE_BUDGET, "group_id = ?", new String[]{String.valueOf(group)});
+    }
+
+    private static int budgetCountLocked(SQLiteDatabase db, int account, long since) {
+        try (Cursor cursor = db.query(
+                TABLE_BUDGET,
+                new String[]{"COUNT(*)"},
+                "account = ? AND added_at >= ?",
+                new String[]{String.valueOf(account), String.valueOf(since)},
+                null, null, null)) {
+            return cursor.moveToFirst() ? cursor.getInt(0) : 0;
+        }
     }
 
     private static MusicTrack parse(String json) {

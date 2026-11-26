@@ -1,5 +1,6 @@
 package ru.vtosters.lite.music.spotify;
 
+import android.content.Context;
 import android.util.Log;
 
 import com.vk.api.audio.AudioAdd;
@@ -21,15 +22,16 @@ import com.vk.dto.music.UserPlaylists;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import ru.vtosters.hooks.other.Preferences;
 import ru.vtosters.lite.core.net.RateLimiter;
 import ru.vtosters.lite.utils.AccountManagerUtils;
+import ru.vtosters.lite.utils.AndroidUtils;
 
 final class VkPlaylistApi {
     private static final String TAG = "VKataxaImport";
@@ -38,7 +40,7 @@ final class VkPlaylistApi {
     private static final int SEARCH_BATCH = 10;
     private static final int ADD_BUDGET_PER_HOUR = 60;
     private static final long ADD_BUDGET_WINDOW_MS = 60 * 60 * 1000L;
-    private static final ArrayDeque<Long> ADD_TIMES = new ArrayDeque<>();
+    private static final String PREF_ADD_BUDGET = "music_import_budget_per_hour";
     private static final RateLimiter LIMITER = new RateLimiter(350L);
 
     private VkPlaylistApi() {
@@ -288,32 +290,41 @@ final class VkPlaylistApi {
         for (int start = 0; start < tracks.size(); start += ADD_CHUNK) {
             int end = Math.min(start + ADD_CHUNK, tracks.size());
             List<MusicTrack> chunk = new ArrayList<>(tracks.subList(start, end));
-            reserveAddBudget(chunk.size());
-            LIMITER.acquire();
-            AudioAddToPlaylist.b builder = new AudioAddToPlaylist.b()
-                    .a(ownerId)
-                    .b(playlistId);
-            for (MusicTrack track : chunk) {
-                builder.a(track);
+            long budgetGroup = reserveAddBudget(chunk.size());
+            boolean added = false;
+            try {
+                LIMITER.acquire();
+                AudioAddToPlaylist.b builder = new AudioAddToPlaylist.b()
+                        .a(ownerId)
+                        .b(playlistId);
+                for (MusicTrack track : chunk) {
+                    builder.a(track);
+                }
+
+                CountDownLatch latch = new CountDownLatch(1);
+                AtomicReference<Throwable> error = new AtomicReference<>();
+
+                builder.a().a(new ApiCallback() {
+                    @Override
+                    public void a(Object o) {
+                        latch.countDown();
+                    }
+
+                    @Override
+                    public void a(VKApiExecutionException e) {
+                        error.set(e);
+                        latch.countDown();
+                    }
+                }).a();
+
+                await(latch, error);
+                added = true;
+            } finally {
+                // BUG-27: a failed/timeout chunk must not consume the hourly quota.
+                if (!added) {
+                    refundAddBudget(budgetGroup);
+                }
             }
-
-            CountDownLatch latch = new CountDownLatch(1);
-            AtomicReference<Throwable> error = new AtomicReference<>();
-
-            builder.a().a(new ApiCallback() {
-                @Override
-                public void a(Object o) {
-                    latch.countDown();
-                }
-
-                @Override
-                public void a(VKApiExecutionException e) {
-                    error.set(e);
-                    latch.countDown();
-                }
-            }).a();
-
-            await(latch, error);
             if (listener != null) {
                 listener.onChunkAdded(chunk);
             }
@@ -440,41 +451,79 @@ final class VkPlaylistApi {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Throwable> error = new AtomicReference<>();
 
-        reserveAddBudget(1);
-        LIMITER.acquire();
-        new AudioAdd(track, null)
-                .a(new ApiCallback<Integer>() {
-                    @Override
-                    public void a(Integer result) {
-                        latch.countDown();
-                    }
+        long budgetGroup = reserveAddBudget(1);
+        boolean added = false;
+        try {
+            LIMITER.acquire();
+            new AudioAdd(track, null)
+                    .a(new ApiCallback<Integer>() {
+                        @Override
+                        public void a(Integer result) {
+                            latch.countDown();
+                        }
 
-                    @Override
-                    public void a(VKApiExecutionException e) {
-                        error.set(e);
-                        latch.countDown();
-                    }
-                })
-                .a();
+                        @Override
+                        public void a(VKApiExecutionException e) {
+                            error.set(e);
+                            latch.countDown();
+                        }
+                    })
+                    .a();
 
-        await(latch, error);
+            await(latch, error);
+            added = true;
+        } finally {
+            // BUG-27: a failed/timeout add must not consume the hourly quota.
+            if (!added) {
+                refundAddBudget(budgetGroup);
+            }
+        }
     }
 
-    private static void reserveAddBudget(int count) throws ImportBudgetExceededException {
+    /**
+     * BUG-27: quota is persisted (music_import.db) and reserved atomically before the request;
+     * successful chunks keep their rows, failed chunks are refunded by group id.
+     */
+    private static long reserveAddBudget(int count) throws ImportBudgetExceededException {
         if (count <= 0) {
+            return 0L;
+        }
+        Context context = AndroidUtils.getGlobalContext();
+        if (context == null) {
+            return 0L;
+        }
+        try {
+            return ImportProgressDb.get(context).budgetReserve(
+                    currentUserId(), count, addBudgetPerHour(), ADD_BUDGET_WINDOW_MS);
+        } catch (ImportBudgetExceededException error) {
+            throw error;
+        } catch (Throwable error) {
+            Log.w(TAG, "add budget unavailable: " + error);
+            return 0L;
+        }
+    }
+
+    private static void refundAddBudget(long group) {
+        if (group == 0L) {
             return;
         }
-        long now = System.currentTimeMillis();
-        synchronized (ADD_TIMES) {
-            while (!ADD_TIMES.isEmpty() && now - ADD_TIMES.peekFirst() > ADD_BUDGET_WINDOW_MS) {
-                ADD_TIMES.removeFirst();
-            }
-            if (ADD_TIMES.size() + count > ADD_BUDGET_PER_HOUR) {
-                throw new ImportBudgetExceededException(ADD_BUDGET_PER_HOUR);
-            }
-            for (int i = 0; i < count; i++) {
-                ADD_TIMES.addLast(now);
-            }
+        Context context = AndroidUtils.getGlobalContext();
+        if (context == null) {
+            return;
+        }
+        try {
+            ImportProgressDb.get(context).budgetRefund(group);
+        } catch (Throwable error) {
+            Log.w(TAG, "add budget refund failed: " + error);
+        }
+    }
+
+    private static int addBudgetPerHour() {
+        try {
+            int value = Preferences.getPreferences().getInt(PREF_ADD_BUDGET, ADD_BUDGET_PER_HOUR);
+            return Math.max(10, Math.min(600, value));
+        } catch (Throwable ignored) {
+            return ADD_BUDGET_PER_HOUR;
         }
     }
 
