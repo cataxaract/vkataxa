@@ -1,3 +1,29 @@
+## v1.1.3
+
+### Added
+- Import stabilization (IMP-1): the journal is DB v5 with `source`, `key_version` and a persistent hourly add budget. Local jobs are scoped to the source (SAF tree or `media`), legacy `local` jobs are migrated, and CSV/local resume uses the saved source instead of asking for the file/folder again.
+- Duplicate search in "Моя музыка" and all playlists (read-only): exact duplicates by VK track id, similar tracks by normalized artist/title/duration; totals and examples. Similar tracks can be selected with checkboxes and deleted after confirmation: "Моя музыка" unlikes, a playlist removes only that playlist entry. Behind `music_dedupe`.
+- Local import selection (IMP-3): after the SAF scan, tracks can be filtered by artist/title and selected with checkboxes before choosing a target. The import footer has a Cancel action; progress is kept as a paused job. Behind `import_ui`.
+
+### Changed
+- Import add budget is reserved in `music_import.db`, refunded on failed/timeout chunks and survives restarts; the limit is 60 per rolling hour by default (`music_import_budget_per_hour`).
+- A successful CSV/Spotify sync clears its journal job, so it no longer appears as a stale paused import; the label and source are stored for resume.
+- Import DB access uses one helper, WAL and a safe `busy_timeout` (rawQuery in `onOpen`) to avoid SQLITE_BUSY on Android 16.
+
+### Fixed
+- Failed, cancelled or refunded chunks no longer consume the hourly budget; the budget survives an app restart.
+- Legacy item keys are detected and the user gets a warning before a one-time re-search; already added VK ids are still de-duplicated.
+- `resumeJob` no longer invents "Spotify" for CSV/local jobs; CSV/local resume reads the persisted source when available.
+- Successful sync jobs no longer remain in the paused list after completion.
+
+### Known limitations
+- VK captcha (error 14) is still not solvable in the client. The 100-track acceptance stopped after 40 processed tracks (39 added, 1 not found); the `paused_captcha` job is saved and was not retried.
+- The live Cancel action was not observed on a long import: the 1-track test import completed before the tap. The cancel path is built and installed but not end-to-end verified.
+- Duplicate deletion is user-driven and irreversible; no deletions were performed during testing. Metadata-based "similar" groups may include different versions/remasters; check duration and the shown track id.
+- `music_dedupe` and `import_ui` are feature flags, disabled by default; enable them in "Флаги фич".
+- The hidden dev console (DEV-01) is a planned registry card, not implemented in this build.
+- The 100-track acceptance (budget windows, kill, error 9/14) is still not completed.
+
 ## v1.1.2
 
 ### Added
