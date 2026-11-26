@@ -25,7 +25,8 @@ import java.util.Set;
 final class ImportProgressDb extends SQLiteOpenHelper {
 
     private static final String DB_NAME = "music_import.db";
-    private static final int DB_VERSION = 3;
+    private static final int DB_VERSION = 4;
+    private static final long ACTIVE_STALE_MS = 5L * 60 * 1000;
     private static final String TABLE_JOBS = "jobs";
     private static final String TABLE_ITEMS = "items";
 
@@ -50,9 +51,10 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         final int added;
         final int matched;
         final int miss;
+        final String label;
 
         PausedJob(String key, String status, int ownerId, int playlistId,
-                  int total, int added, int matched, int miss) {
+                  int total, int added, int matched, int miss, String label) {
             this.key = key;
             this.status = status;
             this.ownerId = ownerId;
@@ -61,6 +63,7 @@ final class ImportProgressDb extends SQLiteOpenHelper {
             this.added = added;
             this.matched = matched;
             this.miss = miss;
+            this.label = label == null ? "" : label;
         }
     }
 
@@ -78,6 +81,7 @@ final class ImportProgressDb extends SQLiteOpenHelper {
                 + "target_playlist INTEGER NOT NULL,"
                 + "status TEXT NOT NULL,"
                 + "updated_at INTEGER NOT NULL,"
+                + "label TEXT NOT NULL DEFAULT '',"
                 + "PRIMARY KEY(account, key))");
         createItems(db);
     }
@@ -85,12 +89,21 @@ final class ImportProgressDb extends SQLiteOpenHelper {
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         if (oldVersion < 2) {
-            db.execSQL("DROP TABLE IF EXISTS " + TABLE_ITEMS);
+            String oldTable = TABLE_ITEMS + "_v1";
+            db.execSQL("ALTER TABLE " + TABLE_ITEMS + " RENAME TO " + oldTable);
             createItems(db);
+            db.execSQL("INSERT OR REPLACE INTO " + TABLE_ITEMS
+                    + " (account, key, item_key, track_uid, state, track_json, updated_at)"
+                    + " SELECT account, key, track_uid, track_uid, 'added', '', updated_at FROM "
+                    + oldTable);
+            db.execSQL("DROP TABLE " + oldTable);
         } else if (oldVersion < 3) {
             db.execSQL("ALTER TABLE " + TABLE_ITEMS + " ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0");
             db.execSQL("ALTER TABLE " + TABLE_ITEMS + " ADD COLUMN last_error TEXT NOT NULL DEFAULT ''");
             db.execSQL("ALTER TABLE " + TABLE_ITEMS + " ADD COLUMN last_attempt INTEGER NOT NULL DEFAULT 0");
+        }
+        if (oldVersion < 4) {
+            db.execSQL("ALTER TABLE " + TABLE_JOBS + " ADD COLUMN label TEXT NOT NULL DEFAULT ''");
         }
     }
 
@@ -144,6 +157,23 @@ final class ImportProgressDb extends SQLiteOpenHelper {
                 new String[]{String.valueOf(account), key});
     }
 
+    void touch(int account, String key) {
+        ContentValues values = new ContentValues();
+        values.put("updated_at", System.currentTimeMillis());
+        getWritableDatabase().update(
+                TABLE_JOBS, values, "account = ? AND key = ?",
+                new String[]{String.valueOf(account), key});
+    }
+
+    void setLabel(int account, String key, String label) {
+        ContentValues values = new ContentValues();
+        values.put("label", label == null ? "" : label);
+        values.put("updated_at", System.currentTimeMillis());
+        getWritableDatabase().update(
+                TABLE_JOBS, values, "account = ? AND key = ?",
+                new String[]{String.valueOf(account), key});
+    }
+
     Set<String> added(int account, String key) {
         Set<String> result = new HashSet<>();
         try (Cursor cursor = getReadableDatabase().query(
@@ -182,16 +212,19 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         java.util.List<String> corrupt = new java.util.ArrayList<>();
         try (Cursor cursor = getReadableDatabase().query(
                 TABLE_ITEMS,
-                new String[]{"item_key", "track_json"},
+                new String[]{"item_key", "track_json", "state"},
                 "account = ? AND key = ? AND state IN (?, ?, ?)",
                 new String[]{String.valueOf(account), key, "matched", "add_intent", "added"},
                 null, null, null)) {
             while (cursor.moveToNext()) {
                 String itemKey = cursor.getString(0);
+                String state = cursor.getString(2);
                 MusicTrack track = parse(cursor.getString(1));
                 if (track != null) {
                     result.put(itemKey, track);
-                } else {
+                } else if (!"added".equals(state)) {
+                    // BUG-21: markAdded may create an "added" row without track_json; resetting it
+                    // to pending would make the next resume search and add the track again.
                     corrupt.add(itemKey);
                 }
             }
@@ -202,17 +235,27 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         return result;
     }
 
+    private static String toJson(MusicTrack track) {
+        try {
+            JSONObject json = track.J();
+            return json == null ? "" : json.toString();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
     void saveMatched(int account, String key, String itemKey, MusicTrack track) {
         if (track == null) {
             return;
         }
+        String json = toJson(track);
         ContentValues values = new ContentValues();
         values.put("account", account);
         values.put("key", key);
         values.put("item_key", itemKey);
         values.put("track_uid", track.y1());
-        values.put("state", "matched");
-        values.put("track_json", track.J() == null ? "{}" : track.J().toString());
+        values.put("state", json.isEmpty() ? "pending" : "matched");
+        values.put("track_json", json);
         values.put("updated_at", System.currentTimeMillis());
         getWritableDatabase().insertWithOnConflict(
                 TABLE_ITEMS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
@@ -222,13 +265,14 @@ final class ImportProgressDb extends SQLiteOpenHelper {
         if (track == null) {
             return;
         }
+        String json = toJson(track);
         ContentValues values = new ContentValues();
         values.put("account", account);
         values.put("key", key);
         values.put("item_key", itemKey);
         values.put("track_uid", track.y1());
-        values.put("state", "add_intent");
-        values.put("track_json", track.J() == null ? "{}" : track.J().toString());
+        values.put("state", json.isEmpty() ? "pending" : "add_intent");
+        values.put("track_json", json);
         values.put("updated_at", System.currentTimeMillis());
         getWritableDatabase().insertWithOnConflict(
                 TABLE_ITEMS, null, values, SQLiteDatabase.CONFLICT_REPLACE);
@@ -296,12 +340,17 @@ final class ImportProgressDb extends SQLiteOpenHelper {
 
     List<PausedJob> paused(int account) {
         List<PausedJob> result = new ArrayList<>();
-        long cutoff = System.currentTimeMillis() - 30L * 24 * 60 * 60 * 1000;
+        long now = System.currentTimeMillis();
+        long cutoff = now - 30L * 24 * 60 * 60 * 1000;
+        long staleCutoff = now - ACTIVE_STALE_MS;
+        // BUG-20: a job left in matching/adding after force-stop has no updates; expose it as paused.
         try (Cursor cursor = getReadableDatabase().query(
                 TABLE_JOBS,
-                new String[]{"key", "status", "target_owner", "target_playlist"},
-                "account = ? AND status LIKE 'paused%' AND updated_at >= ?",
-                new String[]{String.valueOf(account), String.valueOf(cutoff)},
+                new String[]{"key", "status", "target_owner", "target_playlist", "label"},
+                "account = ? AND updated_at >= ? AND (status LIKE 'paused%'"
+                        + " OR (status IN (?, ?) AND updated_at < ?))",
+                new String[]{String.valueOf(account), String.valueOf(cutoff),
+                        "matching", "adding", String.valueOf(staleCutoff)},
                 null, null, "updated_at DESC", "20")) {
             while (cursor.moveToNext()) {
                 String key = cursor.getString(0);
@@ -313,7 +362,8 @@ final class ImportProgressDb extends SQLiteOpenHelper {
                         count(account, key, null),
                         count(account, key, "added"),
                         count(account, key, "matched") + count(account, key, "add_intent"),
-                        count(account, key, "miss")
+                        count(account, key, "miss"),
+                        cursor.getString(4)
                 ));
             }
         }

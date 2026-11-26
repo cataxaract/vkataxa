@@ -16,6 +16,7 @@ import com.vk.dto.music.Playlist;
 import com.vtosters.lite.ui.SummaryListPreference;
 import ru.vtosters.hooks.other.Preferences;
 import ru.vtosters.hooks.other.ThemesUtils;
+import ru.vtosters.lite.core.flags.FeatureFlags;
 import ru.vtosters.lite.downloaders.AudioDownloader;
 import ru.vtosters.lite.music.LastFMScrobbler;
 import ru.vtosters.lite.music.spotify.SpotifyImportActivity;
@@ -50,6 +51,20 @@ public class MusicFragment extends TrackedMaterialPreferenceToolbarFragment {
         requireActivity().getWindow().setNavigationBarColor(ThemesUtils.getBackgroundContent());
 
         PreferenceFragmentUtils.addPreferenceCategory(getPreferenceScreen(), "Офлайн прослушивание");
+
+        if (FeatureFlags.isEnabled(FeatureFlags.Flag.MUSIC_SORT)) {
+            PreferenceFragmentUtils.addPreference(
+                    getPreferenceScreen(),
+                    "music_sort",
+                    "Сортировка музыки",
+                    sortLabel(repo().sortMode()),
+                    null,
+                    preference -> {
+                        showSortDialog();
+                        return true;
+                    }
+            );
+        }
 
         PreferenceFragmentUtils.addPreference(
                 getPreferenceScreen(),
@@ -430,6 +445,42 @@ public class MusicFragment extends TrackedMaterialPreferenceToolbarFragment {
                 )
                 .setView(linearLayout)
                 .show();
+    }
+
+    private void showSortDialog() {
+        String[] items = {"По дате добавления", "По названию", "По исполнителю", "По длительности"};
+        MusicRepository.SortMode[] modes = MusicRepository.SortMode.values();
+
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(requireContext(),
+                android.R.layout.simple_list_item_1, items) {
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                TextView textView = (TextView) super.getView(position, convertView, parent);
+                textView.setTextColor(getTextAttr());
+                return textView;
+            }
+        };
+
+        new VkAlertDialog.Builder(requireContext())
+                .setTitle("Сортировка музыки")
+                .setAdapter(adapter, (dialog, which) -> {
+                    repo().setSortMode(modes[which]);
+                    findPreference("music_sort").setSummary(sortLabel(repo().sortMode()));
+                    dialog.cancel();
+                })
+                .show();
+    }
+
+    private static String sortLabel(MusicRepository.SortMode mode) {
+        if (mode == null) {
+            return "По дате добавления";
+        }
+        return switch (mode) {
+            case TITLE -> "По названию";
+            case ARTIST -> "По исполнителю";
+            case DURATION -> "По длительности";
+            default -> "По дате добавления";
+        };
     }
 
     private static String getAutocacheSumm() {

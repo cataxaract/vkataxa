@@ -49,6 +49,7 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import ru.vtosters.hooks.other.Preferences;
 import ru.vtosters.hooks.other.ThemesUtils;
 import ru.vtosters.lite.utils.AccountManagerUtils;
 import ru.vtosters.lite.utils.AndroidUtils;
@@ -56,6 +57,8 @@ import ru.vtosters.lite.utils.AndroidUtils;
 public class SpotifyImportActivity extends AppCompatActivity {
     private static final int REQ_CSV = 7101;
     private static final int REQ_STORAGE = 7102;
+    private static final int REQ_TREE = 7103;
+    private static final String PREF_LOCAL_TREE = "music_local_tree";
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -66,6 +69,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
     private ProgressBar progress;
     private TextView status;
     private TextView pausedJobs;
+    private TextView localFolder;
     private boolean running;
     private String pendingCsvKey;
     private String pendingCsvName;
@@ -83,6 +87,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         updatePausedJobs();
+        updateLocalFolder();
     }
 
     @Override
@@ -95,6 +100,22 @@ public class SpotifyImportActivity extends AppCompatActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_TREE) {
+            if (resultCode == Activity.RESULT_OK && data != null && data.getData() != null) {
+                Uri tree = data.getData();
+                int flags = data.getFlags()
+                        & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                try {
+                    getContentResolver().takePersistableUriPermission(tree,
+                            flags != 0 ? flags : Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                } catch (Throwable ignored) {
+                }
+                Preferences.getPreferences().edit().putString(PREF_LOCAL_TREE, tree.toString()).apply();
+                updateLocalFolder();
+                scanLocalMusic();
+            }
+            return;
+        }
         if (requestCode != REQ_CSV || resultCode != Activity.RESULT_OK || data == null || data.getData() == null) {
             pendingCsvKey = null;
             pendingCsvName = null;
@@ -169,6 +190,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
         title.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         toolbar.addView(title);
 
+        // TEMP-UI(MU-10): toolbar "Прервано" + paused-jobs dialogs. Remove after the redesign.
         pausedJobs = text("Прервано", 13, accent(), true);
         pausedJobs.setPadding(dp(8), dp(8), dp(8), dp(8));
         pausedJobs.setVisibility(View.GONE);
@@ -610,21 +632,40 @@ public class SpotifyImportActivity extends AppCompatActivity {
         card.addView(title);
 
         TextView description = text(
-                "Найдёт аудиофайлы в Music/ и Download/, сопоставит их с VK "
-                        + "и добавит найденное в «Мою музыку» без дублей.",
+                "Выберите папку с треками (например, папку Omnia) или оставьте Music/ и Download/. "
+                        + "Мод сопоставит файлы с VK и добавит найденное без дублей.",
                 12,
                 secondaryText(),
                 false
         );
-        description.setPadding(0, 0, 0, dp(14));
+        description.setPadding(0, 0, 0, dp(10));
         card.addView(description);
 
-        TextView choose = button("Добавить в «Мою музыку»");
+        localFolder = text("", 12, secondaryText(), false);
+        localFolder.setPadding(0, 0, 0, dp(10));
+        updateLocalFolder();
+        card.addView(localFolder);
+
+        LinearLayout folderActions = new LinearLayout(this);
+        folderActions.setOrientation(LinearLayout.HORIZONTAL);
+        TextView pickFolder = button("Выбрать папку");
+        pickFolder.setOnClickListener(v -> pickLocalFolder());
+        LinearLayout.LayoutParams pickParams = new LinearLayout.LayoutParams(0, dp(40), 1f);
+        pickParams.setMargins(0, 0, dp(8), 0);
+        folderActions.addView(pickFolder, pickParams);
+        TextView resetFolder = button("Сбросить");
+        resetFolder.setOnClickListener(v -> resetLocalFolder());
+        folderActions.addView(resetFolder, new LinearLayout.LayoutParams(0, dp(40), 1f));
+        card.addView(folderActions);
+
+        TextView choose = button("Сканировать и импортировать");
         choose.setOnClickListener(v -> startLocalImport());
-        card.addView(choose, new LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams chooseParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(44)
-        ));
+        );
+        chooseParams.setMargins(0, dp(8), 0, 0);
+        card.addView(choose, chooseParams);
         return card;
     }
 
@@ -633,7 +674,8 @@ public class SpotifyImportActivity extends AppCompatActivity {
             Toast.makeText(this, "Дождитесь завершения операции", Toast.LENGTH_SHORT).show();
             return;
         }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+        boolean hasTree = !Preferences.getString(PREF_LOCAL_TREE).isEmpty();
+        if (!hasTree && ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(
                     this,
@@ -649,26 +691,32 @@ public class SpotifyImportActivity extends AppCompatActivity {
         if (running) {
             return;
         }
+        String tree = Preferences.getString(PREF_LOCAL_TREE);
         running = true;
         showProgress("Ищем аудиофайлы...");
 
         executor.execute(() -> {
             try {
-                File folder = LocalMusicScanner.defaultFolder();
-                List<SpotifyTrack> tracks = LocalMusicScanner.scan(this, folder);
+                List<SpotifyTrack> tracks;
+                String source;
+                if (!tree.isEmpty()) {
+                    Uri uri = Uri.parse(tree);
+                    tracks = LocalMusicScanner.scanTree(this, uri);
+                    source = folderName(uri);
+                } else {
+                    File folder = LocalMusicScanner.defaultFolder();
+                    tracks = LocalMusicScanner.scan(this, folder);
+                    source = "Music/ и Download/";
+                }
                 main.post(() -> {
                     if (tracks.isEmpty()) {
                         running = false;
                         hideProgress();
-                        Toast.makeText(
-                                this,
-                                "В папке " + folder.getAbsolutePath() + " нет аудиофайлов",
-                                Toast.LENGTH_LONG
-                        ).show();
+                        Toast.makeText(this, "В " + source + " нет аудиофайлов", Toast.LENGTH_LONG).show();
                         return;
                     }
                     hideProgress();
-                    showLocalImportDialog(tracks);
+                    showLocalImportDialog(tracks, source);
                 });
             } catch (Throwable error) {
                 main.post(() -> {
@@ -680,9 +728,17 @@ public class SpotifyImportActivity extends AppCompatActivity {
         });
     }
 
-    private void showLocalImportDialog(List<SpotifyTrack> tracks) {
+    private void showLocalImportDialog(List<SpotifyTrack> tracks, String source) {
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.VERTICAL);
+        header.setPadding(dp(24), dp(20), dp(24), dp(8));
+        header.addView(text("Найдено " + tracks.size() + " аудиофайлов", 20, text(), true));
+        TextView summary = text(preview(source, tracks), 12, secondaryText(), false);
+        summary.setPadding(0, dp(6), 0, 0);
+        header.addView(summary);
+
         new AlertDialog.Builder(this)
-                .setTitle("Найдено " + tracks.size() + " аудиофайлов")
+                .setCustomTitle(header)
                 .setItems(new String[]{
                         "В «Мою музыку»",
                         "В существующий плейлист",
@@ -699,6 +755,75 @@ public class SpotifyImportActivity extends AppCompatActivity {
                 .setNegativeButton("Отмена", (d, which) -> running = false)
                 .setOnCancelListener(d -> running = false)
                 .show();
+    }
+
+    private void pickLocalFolder() {
+        if (running) {
+            Toast.makeText(this, "Дождитесь завершения операции", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        try {
+            startActivityForResult(intent, REQ_TREE);
+        } catch (Throwable error) {
+            Toast.makeText(this, "Не удалось открыть выбор папки: " + message(error), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void resetLocalFolder() {
+        if (running) {
+            Toast.makeText(this, "Дождитесь завершения операции", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Preferences.getPreferences().edit().remove(PREF_LOCAL_TREE).apply();
+        updateLocalFolder();
+    }
+
+    private void updateLocalFolder() {
+        if (localFolder == null) {
+            return;
+        }
+        String tree = Preferences.getString(PREF_LOCAL_TREE);
+        localFolder.setText(tree.isEmpty()
+                ? "Папка по умолчанию: Music/ и Download/"
+                : "Папка: " + folderName(Uri.parse(tree)));
+    }
+
+    private static String folderName(Uri tree) {
+        try {
+            String id = android.provider.DocumentsContract.getTreeDocumentId(tree);
+            if (id != null && !id.isEmpty()) {
+                id = Uri.decode(id);
+                if (id.startsWith("primary:")) {
+                    id = id.substring("primary:".length());
+                }
+                return id;
+            }
+        } catch (Throwable ignored) {
+        }
+        String last = tree.getLastPathSegment();
+        return last == null ? tree.toString() : Uri.decode(last);
+    }
+
+    private static String preview(String source, List<SpotifyTrack> tracks) {
+        StringBuilder text = new StringBuilder("Папка: ").append(source);
+        if (!tracks.isEmpty()) {
+            SpotifyTrack first = tracks.get(0);
+            String artist = first.artist == null ? "" : first.artist;
+            String title = first.title == null ? "" : first.title;
+            text.append("\nПервый: ");
+            if (!artist.isEmpty()) {
+                text.append(artist).append(" — ");
+            }
+            text.append(title);
+            if (tracks.size() > 1) {
+                text.append(" (+").append(tracks.size() - 1).append(")");
+            }
+        }
+        return text.toString();
     }
 
     private void loadLocalPlaylists(List<SpotifyTrack> tracks) {
@@ -1175,7 +1300,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
         for (int i = 0; i < jobs.size(); i++) {
             ImportProgressDb.PausedJob job = jobs.get(i);
             titles[i] = "Добавлено " + job.added + " из " + job.total
-                    + " · не найдено " + job.miss + "\n" + job.key;
+                    + " · не найдено " + job.miss + "\n" + jobLabel(job);
         }
         new VkAlertDialog.Builder(this)
                 .setTitle("Прерванные импорты")
@@ -1187,7 +1312,7 @@ public class SpotifyImportActivity extends AppCompatActivity {
     private void showPausedJobActions(ImportProgressDb.PausedJob job) {
         String[] actions = {"Продолжить", "Повторить ненайденные", "Забыть"};
         new VkAlertDialog.Builder(this)
-                .setTitle(job.key)
+                .setTitle(jobLabel(job))
                 .setItems(actions, (dialog, which) -> {
                     if (which == 0) {
                         resumeJob(job);
@@ -1205,17 +1330,37 @@ public class SpotifyImportActivity extends AppCompatActivity {
     }
 
     private void resumeJob(ImportProgressDb.PausedJob job) {
+        if (running) {
+            Toast.makeText(this, "Дождитесь завершения операции", Toast.LENGTH_SHORT).show();
+            return;
+        }
         if (job.key != null && job.key.startsWith("csv:")) {
-            pickCsv(job.key, job.key.substring("csv:".length()));
+            pickCsv(job.key, jobLabel(job));
             return;
         }
         if (job.key != null && job.key.startsWith("local")) {
             Toast.makeText(this,
-                    "Запустите импорт из папки заново — прогресс сохранён",
+                    "Запустите импорт «" + jobLabel(job) + "» заново — прогресс сохранён",
                     Toast.LENGTH_LONG).show();
             return;
         }
-        start(new SpotifyPlaylist(job.key, "Spotify", "", "", 0, ""), true);
+        start(new SpotifyPlaylist(job.key, jobLabel(job), "", "", 0, ""), true);
+    }
+
+    private static String jobLabel(ImportProgressDb.PausedJob job) {
+        if (job.label != null && !job.label.isEmpty()) {
+            return job.label;
+        }
+        if (job.key != null && job.key.startsWith("csv:")) {
+            return job.key.substring("csv:".length());
+        }
+        if (job.key != null && job.key.startsWith("local")) {
+            return "Локальная музыка";
+        }
+        if (job.key != null && job.key.startsWith("spotify:")) {
+            return "Spotify";
+        }
+        return job.key == null ? "Импорт" : job.key;
     }
 
     private int dp(int value) {

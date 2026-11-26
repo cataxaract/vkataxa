@@ -156,9 +156,11 @@ public final class SpotifyImportService {
                 progressDb.saveTarget(targetOwner, key, targetOwner, targetPlaylist, "matching");
                 result.created = true;
             }
+            progressDb.setLabel(ownerId, key, playlistName);
 
             Set<String> alreadyAdded = progressDb.added(targetOwner, key);
             Set<String> targetUids = readTargetUids(targetOwner, targetPlaylist);
+            progressDb.touch(targetOwner, key);
             List<MusicTrack> addedNow = new ArrayList<>();
             List<Match> matches = matchTracks(spotifyTracks, progress, result, progressDb,
                     targetOwner, key, batch -> addMatchesImmediately(
@@ -195,6 +197,7 @@ public final class SpotifyImportService {
                             targetUids.add(uid);
                             addedNow.add(track);
                         }
+                        progressDb.touch(targetOwner, key);
                     });
                 } catch (Throwable addError) {
                     reconcileAdds(targetOwner, targetPlaylist, progressDb, key, toAdd, uidToItem);
@@ -261,7 +264,9 @@ public final class SpotifyImportService {
             String key = "local:" + targetOwner + "_" + targetPlaylist;
             ImportProgressDb progressDb = new ImportProgressDb(context);
             progressDb.saveTarget(account, key, targetOwner, targetPlaylist, "matching");
+            progressDb.setLabel(account, key, "Локальная музыка");
             Set<String> targetUids = readTargetUids(targetOwner, targetPlaylist);
+            progressDb.touch(account, key);
             Set<String> alreadyAdded = progressDb.added(account, key);
             List<MusicTrack> addedNow = new ArrayList<>();
             Result result = new Result();
@@ -305,9 +310,11 @@ public final class SpotifyImportService {
             ImportProgressDb progressDb = new ImportProgressDb(context);
             Set<String> alreadyAdded = progressDb.added(account, "local");
             progressDb.saveTarget(account, "local", account, 0, "adding");
+            progressDb.setLabel(account, "local", "Локальная музыка");
 
             progress.onProgress(0, localTracks.size(), "Сверяем с «Моей музыкой»...");
             List<MusicTrack> myMusic = VkPlaylistApi.getMyMusic();
+            progressDb.touch(account, "local");
             Set<String> existing = new HashSet<>();
             Map<String, List<MusicTrack>> byTitle = new HashMap<>();
             for (MusicTrack track : myMusic) {
@@ -380,6 +387,7 @@ public final class SpotifyImportService {
                     progressDb.saveIntent(account, "local", item, track);
                     VkPlaylistApi.addToMyMusic(track);
                     progressDb.markAdded(account, "local", item, uid);
+                    progressDb.touch(account, "local");
                     targetUids.add(uid);
                     added++;
                 } catch (Throwable error) {
@@ -617,6 +625,7 @@ public final class SpotifyImportService {
                     progress.onProgress(done, total, "Не найдено: " + spotify.artist + " — " + spotify.title);
                 }
             }
+            progressDb.touch(account, key);
 
             if (sink != null) {
                 List<Match> fresh = new ArrayList<>();
@@ -775,6 +784,7 @@ public final class SpotifyImportService {
             targetUids.add(uid);
             addedNow.add(match.track);
         }
+        progressDb.touch(account, "local");
     }
 
     private static void addMatchesImmediately(
@@ -818,6 +828,7 @@ public final class SpotifyImportService {
                     targetUids.add(uid);
                     addedNow.add(track);
                 }
+                progressDb.touch(ownerId, key);
             });
         } catch (Throwable addError) {
             reconcileAdds(ownerId, playlistId, progressDb, key, toAdd, uidToItem);
@@ -841,6 +852,7 @@ public final class SpotifyImportService {
                     progressDb.markAdded(ownerId, key, uidToItem.getOrDefault(uid, uid), uid);
                 }
             }
+            progressDb.touch(ownerId, key);
         } catch (Throwable reconcileError) {
             logImportError("reconcile", reconcileError);
         }

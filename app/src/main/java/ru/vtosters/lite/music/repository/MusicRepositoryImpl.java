@@ -22,9 +22,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import ru.vtosters.hooks.other.Preferences;
 import ru.vtosters.lite.concurrent.VTExecutors;
 import ru.vtosters.lite.core.log.VtLog;
 import ru.vtosters.lite.core.music.MusicRepository;
+import ru.vtosters.lite.core.music.MusicSorter;
 import ru.vtosters.lite.core.state.MutableStore;
 import ru.vtosters.lite.core.state.Store;
 import ru.vtosters.lite.music.cache.MusicCacheImpl;
@@ -42,6 +44,7 @@ import ru.vtosters.lite.utils.NetworkUtils;
 public final class MusicRepositoryImpl implements MusicRepository {
 
     private static final String TAG = "MusicRepo";
+    private static final String PREF_SORT_MODE = "music_sort_mode";
     private static final int LIKED_PAGE = 100;
     private static final int LIKED_MAX = 20_000;
     private static final long API_TIMEOUT_SECONDS = 30L;
@@ -58,6 +61,11 @@ public final class MusicRepositoryImpl implements MusicRepository {
             new MutableStore<>(Collections.emptyList());
     private final MutableStore<List<MusicTrack>> emptyTracksStore =
             new MutableStore<>(Collections.emptyList());
+
+    private volatile List<MusicTrack> rawCachedTracks = Collections.emptyList();
+    private volatile List<MusicTrack> rawLikedTracks = Collections.emptyList();
+    private volatile List<Playlist> rawCachedPlaylists = Collections.emptyList();
+    private volatile MusicRepository.SortMode sortMode = loadSortMode();
 
     private final Map<String, MutableStore<Boolean>> likedFlags = new ConcurrentHashMap<>();
     private final Set<String> likedIds = ConcurrentHashMap.newKeySet();
@@ -79,6 +87,49 @@ public final class MusicRepositoryImpl implements MusicRepository {
 
     static MusicRepositoryImpl instance() {
         return INSTANCE;
+    }
+
+    @Override
+    public MusicRepository.SortMode sortMode() {
+        return sortMode;
+    }
+
+    @Override
+    public void setSortMode(MusicRepository.SortMode mode) {
+        MusicRepository.SortMode value = mode == null
+                ? MusicRepository.SortMode.DATE_ADDED : mode;
+        sortMode = value;
+        try {
+            Preferences.getPreferences().edit().putString(PREF_SORT_MODE, value.name()).apply();
+        } catch (Throwable t) {
+            VtLog.e(TAG, "sort mode persist failed", t);
+        }
+        publishCachedTracks();
+        publishLikedTracks();
+        publishCachedPlaylists();
+    }
+
+    private static MusicRepository.SortMode loadSortMode() {
+        try {
+            String value = Preferences.getString(PREF_SORT_MODE);
+            if (value != null && !value.isEmpty()) {
+                return MusicRepository.SortMode.valueOf(value);
+            }
+        } catch (Throwable ignored) {
+        }
+        return MusicRepository.SortMode.DATE_ADDED;
+    }
+
+    private void publishCachedTracks() {
+        cachedTracksStore.set(MusicSorter.sortTracks(rawCachedTracks, sortMode));
+    }
+
+    private void publishLikedTracks() {
+        likedTracksStore.set(MusicSorter.sortTracks(rawLikedTracks, sortMode));
+    }
+
+    private void publishCachedPlaylists() {
+        cachedPlaylistsStore.set(MusicSorter.sortPlaylists(rawCachedPlaylists, sortMode));
     }
 
     @Override
@@ -242,7 +293,8 @@ public final class MusicRepositoryImpl implements MusicRepository {
                 synchronized (likedLock) {
                     likedIds.clear();
                     likedIds.addAll(ids);
-                    likedTracksStore.set(Collections.unmodifiableList(new ArrayList<>(tracks)));
+                    rawLikedTracks = Collections.unmodifiableList(new ArrayList<>(tracks));
+                    publishLikedTracks();
                     for (Map.Entry<String, MutableStore<Boolean>> entry : likedFlags.entrySet()) {
                         entry.getValue().set(likedIds.contains(entry.getKey()));
                     }
@@ -357,8 +409,9 @@ public final class MusicRepositoryImpl implements MusicRepository {
         if (playlists == null) {
             playlists = Collections.emptyList();
         }
-        cachedPlaylistsStore.set(Collections.unmodifiableList(new ArrayList<>(playlists)));
-        return playlists;
+        rawCachedPlaylists = Collections.unmodifiableList(new ArrayList<>(playlists));
+        publishCachedPlaylists();
+        return MusicSorter.sortPlaylists(rawCachedPlaylists, sortMode);
     }
 
     @Override
@@ -370,7 +423,8 @@ public final class MusicRepositoryImpl implements MusicRepository {
         try {
             List<MusicTrack> tracks = MusicCacheImpl.getPlaylistSongs(
                     String.valueOf(ids[0]), String.valueOf(ids[1]));
-            return tracks == null ? Collections.emptyList() : tracks;
+            return MusicSorter.sortTracks(
+                    tracks == null ? Collections.emptyList() : tracks, sortMode);
         } catch (Throwable t) {
             VtLog.e(TAG, "cachedPlaylistTracks failed", t);
             return Collections.emptyList();
@@ -466,7 +520,8 @@ public final class MusicRepositoryImpl implements MusicRepository {
         if (tracks == null) {
             tracks = Collections.emptyList();
         }
-        cachedTracksStore.set(Collections.unmodifiableList(new ArrayList<>(tracks)));
+        rawCachedTracks = Collections.unmodifiableList(new ArrayList<>(tracks));
+        publishCachedTracks();
         cachedPlaylistsNow();
         cacheLoaded = true;
     }
@@ -585,7 +640,7 @@ public final class MusicRepositoryImpl implements MusicRepository {
                 flag.set(true);
             }
 
-            List<MusicTrack> current = new ArrayList<>(likedTracksStore.get());
+            List<MusicTrack> current = new ArrayList<>(rawLikedTracks);
             for (MusicTrack existing : current) {
                 if (id.equals(idOf(existing))) {
                     persistLiked(account, id, true);
@@ -593,7 +648,8 @@ public final class MusicRepositoryImpl implements MusicRepository {
                 }
             }
             current.add(0, track);
-            likedTracksStore.set(Collections.unmodifiableList(current));
+            rawLikedTracks = Collections.unmodifiableList(current);
+            publishLikedTracks();
         }
         persistLiked(account, id, true);
     }
@@ -613,12 +669,13 @@ public final class MusicRepositoryImpl implements MusicRepository {
             }
 
             List<MusicTrack> current = new ArrayList<>();
-            for (MusicTrack existing : likedTracksStore.get()) {
+            for (MusicTrack existing : rawLikedTracks) {
                 if (!id.equals(idOf(existing))) {
                     current.add(existing);
                 }
             }
-            likedTracksStore.set(Collections.unmodifiableList(current));
+            rawLikedTracks = Collections.unmodifiableList(current);
+            publishLikedTracks();
         }
         persistLiked(account, id, false);
     }

@@ -1,3 +1,27 @@
+## v1.1.2
+
+### Added
+- Local music import now lets you pick any folder with the system folder picker (SAF): the choice is remembered, the folder is scanned recursively, and "Сбросить" returns to the fast `Music/` + `Download/` scan. The import dialog shows the folder, the first track and the number of files before choosing a target.
+- Music sorting: "Сортировка музыки" in Music settings with date added, title, artist and duration. The choice is stored and applied by `MusicRepository` to cached tracks, liked tracks and cached playlists; it is enabled by default and can be disabled in feature flags.
+- Paused imports now remember the source name (Spotify playlist or CSV file) and show it with progress in "Прерванные импорты"; Spotify resume reuses the name.
+
+### Changed
+- Local import scans are bounded to 60 seconds / 5000 files / depth 8, so a large or unexpected folder cannot hang the import screen.
+- Import journal moved to DB v4 to store the source label; existing jobs are migrated without losing progress.
+
+### Fixed
+- A track imported with corrupt/empty JSON state is no longer reset and re-added on resume; a JSON serialization failure no longer aborts the import.
+- Import DB v1->v2 migration no longer drops the progress table.
+- A job left in `matching`/`adding` after a force-stop is shown as paused after 5 minutes without updates and can be resumed; resume is blocked while another import is running.
+
+### Known limitations
+- Sorting applies to repository-backed lists (offline cache, cached playlists, liked store); the native online VK music catalog still uses the server order.
+- CSV resume still asks for the file again; local resume still asks to start the folder import again. The label is stored, but the source URI is not.
+- The SAF picker cannot access `Android/data`; move such folders to `Music/` or `Download/` first.
+- Local files missing from the VK catalog are reported but not uploaded; only matched VK tracks are added.
+- The 100-track acceptance import was not rerun; imports on the main account were not executed during testing.
+- Quick "My Wave"/"Home" shortcuts from playlist/artist/search are blocked: this client has no `Navigator.openMusicWave/openMusicHome` and the menu would need new resources or smali changes.
+
 ## v1.1.1
 
 ### Added

@@ -36,7 +36,7 @@ public final class FeatureFlags {
         SPOTIFY_SYNC("spotify_sync", false, "Spotify → VK: добавление найденных треков", 0),
         IMPORT_QUEUE("import_queue", false, "Импорт без капчи: дедуп и очередь", 0),
         SPOTIFY_VPN("spotify_vpn", false, "Exportify: обработка 403/без VPN", 0),
-        MUSIC_SORT("music_sort", false, "Сортировка и управление музыкой", 0);
+        MUSIC_SORT("music_sort", true, "Сортировка и управление музыкой", 0);
 
         public final String key;
         public final boolean def;

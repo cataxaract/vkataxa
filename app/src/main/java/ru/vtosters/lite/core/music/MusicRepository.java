@@ -14,6 +14,17 @@ import java.util.List;
  */
 public interface MusicRepository {
 
+    enum SortMode {
+        DATE_ADDED,
+        TITLE,
+        ARTIST,
+        DURATION
+    }
+
+    SortMode sortMode();
+
+    void setSortMode(SortMode mode);
+
     Store<Boolean> isLiked(String trackId);
 
     boolean isLikedNow(String trackId);

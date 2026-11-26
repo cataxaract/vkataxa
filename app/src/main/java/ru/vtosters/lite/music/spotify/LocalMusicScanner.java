@@ -6,6 +6,7 @@ import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 
 import java.io.File;
@@ -21,6 +22,9 @@ public final class LocalMusicScanner {
     private static final Set<String> EXTENSIONS = new HashSet<>(Arrays.asList(
             "mp3", "m4a", "aac", "flac", "ogg", "opus", "wav", "wma", "webm"
     ));
+    private static final int MAX_SCAN_FILES = 5000;
+    private static final int MAX_SCAN_DEPTH = 8;
+    private static final long MAX_SCAN_MS = 60_000L;
 
     private LocalMusicScanner() {
     }
@@ -119,6 +123,64 @@ public final class LocalMusicScanner {
         return result;
     }
 
+    public static List<SpotifyTrack> scanTree(Context context, Uri treeUri) {
+        List<SpotifyTrack> result = new ArrayList<>();
+        if (context == null || treeUri == null) {
+            return result;
+        }
+        long deadline = System.currentTimeMillis() + MAX_SCAN_MS;
+        try {
+            String rootId = DocumentsContract.getTreeDocumentId(treeUri);
+            collectTree(context, treeUri, rootId, result, 0, deadline);
+        } catch (Throwable ignored) {
+        }
+        result.sort(Comparator.comparing(track -> track.title, String.CASE_INSENSITIVE_ORDER));
+        return result;
+    }
+
+    private static void collectTree(Context context, Uri treeUri, String documentId,
+                                    List<SpotifyTrack> result, int depth, long deadline) {
+        if (depth > MAX_SCAN_DEPTH || result.size() >= MAX_SCAN_FILES
+                || System.currentTimeMillis() > deadline) {
+            return;
+        }
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, documentId);
+        try (Cursor cursor = context.getContentResolver().query(
+                children,
+                new String[]{
+                        DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                        DocumentsContract.Document.COLUMN_MIME_TYPE
+                },
+                null, null, null)) {
+            if (cursor == null) {
+                return;
+            }
+            while (cursor.moveToNext()
+                    && result.size() < MAX_SCAN_FILES
+                    && System.currentTimeMillis() <= deadline) {
+                String id = cursor.getString(0);
+                String name = cursor.getString(1);
+                String mime = cursor.getString(2);
+                if (id == null || name == null || name.startsWith(".")) {
+                    continue;
+                }
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+                    collectTree(context, treeUri, id, result, depth + 1, deadline);
+                    continue;
+                }
+                if (!isAudio(name) && (mime == null || !mime.startsWith("audio/"))) {
+                    continue;
+                }
+                SpotifyTrack track = read(context, treeUri, id, name);
+                if (track != null && track.usable()) {
+                    result.add(track);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     private static List<SpotifyTrack> scanFiles(File folder) {
         List<SpotifyTrack> result = new ArrayList<>();
         if (folder == null || !folder.isDirectory()) {
@@ -126,7 +188,7 @@ public final class LocalMusicScanner {
         }
 
         List<File> files = new ArrayList<>();
-        collect(folder, files);
+        collect(folder, files, 0, System.currentTimeMillis() + MAX_SCAN_MS);
         files.sort(Comparator.comparing(File::getAbsolutePath, String.CASE_INSENSITIVE_ORDER));
 
         for (File file : files) {
@@ -138,17 +200,24 @@ public final class LocalMusicScanner {
         return result;
     }
 
-    private static void collect(File folder, List<File> files) {
+    private static void collect(File folder, List<File> files, int depth, long deadline) {
+        if (depth > MAX_SCAN_DEPTH || files.size() >= MAX_SCAN_FILES
+                || System.currentTimeMillis() > deadline) {
+            return;
+        }
         File[] children = folder.listFiles();
         if (children == null) {
             return;
         }
         for (File child : children) {
+            if (files.size() >= MAX_SCAN_FILES || System.currentTimeMillis() > deadline) {
+                return;
+            }
             if (child.isHidden()) {
                 continue;
             }
             if (child.isDirectory()) {
-                collect(child, files);
+                collect(child, files, depth + 1, deadline);
             } else if (isAudio(child)) {
                 files.add(child);
             }
@@ -156,7 +225,10 @@ public final class LocalMusicScanner {
     }
 
     private static boolean isAudio(File file) {
-        String name = file.getName();
+        return isAudio(file.getName());
+    }
+
+    private static boolean isAudio(String name) {
         int dot = name.lastIndexOf('.');
         if (dot < 0 || dot + 1 >= name.length()) {
             return false;
@@ -168,53 +240,65 @@ public final class LocalMusicScanner {
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         try {
             retriever.setDataSource(file.getAbsolutePath());
-
-            String title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE);
-            String artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST);
-            String duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
-
-            title = clean(title);
-            artist = clean(artist);
-
-            String baseName = baseName(file);
-            if (title.isEmpty()) {
-                int dash = baseName.indexOf(" - ");
-                if (dash > 0) {
-                    if (artist.isEmpty()) {
-                        artist = clean(baseName.substring(0, dash));
-                    }
-                    title = clean(baseName.substring(dash + 3));
-                } else {
-                    title = baseName;
-                }
-            }
-            if (title.isEmpty()) {
-                return null;
-            }
-
-            int durationMs = 0;
-            if (duration != null) {
-                try {
-                    durationMs = Integer.parseInt(duration.trim());
-                } catch (NumberFormatException ignored) {
-                }
-            }
-
-            return new SpotifyTrack(
-                    "local:" + file.getAbsolutePath(),
-                    title,
-                    artist,
-                    durationMs,
-                    true,
-                    "local"
-            );
+            return buildTrack(retriever, "local:" + file.getAbsolutePath(), baseName(file));
         } catch (Throwable ignored) {
             return null;
         } finally {
-            try {
-                retriever.release();
-            } catch (Throwable ignored) {
+            release(retriever);
+        }
+    }
+
+    private static SpotifyTrack read(Context context, Uri treeUri, String documentId, String name) {
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            Uri uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
+            retriever.setDataSource(context, uri);
+            return buildTrack(retriever, "local:saf:" + uri, baseName(name));
+        } catch (Throwable ignored) {
+            return null;
+        } finally {
+            release(retriever);
+        }
+    }
+
+    private static SpotifyTrack buildTrack(MediaMetadataRetriever retriever, String id, String baseName) {
+        String title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE);
+        String artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST);
+        String duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+
+        title = clean(title);
+        artist = clean(artist);
+
+        if (title.isEmpty()) {
+            int dash = baseName.indexOf(" - ");
+            if (dash > 0) {
+                if (artist.isEmpty()) {
+                    artist = clean(baseName.substring(0, dash));
+                }
+                title = clean(baseName.substring(dash + 3));
+            } else {
+                title = baseName;
             }
+        }
+        if (title.isEmpty()) {
+            return null;
+        }
+
+        int durationMs = 0;
+        if (duration != null) {
+            try {
+                durationMs = Integer.parseInt(duration.trim());
+            } catch (NumberFormatException ignored) {
+            }
+        }
+
+        return new SpotifyTrack(id, title, artist, durationMs, true, "local");
+    }
+
+    private static void release(MediaMetadataRetriever retriever) {
+        try {
+            retriever.release();
+        } catch (Throwable ignored) {
         }
     }
 
